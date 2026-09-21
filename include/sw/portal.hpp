@@ -73,6 +73,11 @@ struct FormPlan {
   std::vector<std::pair<std::string, std::string>> fields;  // ready to encode
 };
 
+// Why a login that was accepted at the protocol level still left the machine
+// offline. Exposed for testing; distinguishes a rejected credential from a
+// second portal taking over, which is what chained logins look like.
+std::string explain_failed_verification(const Probe &last, const std::string &submitted_to);
+
 FormPlan plan_form_login(const Config &cfg, const LoginPage &page, const std::string &username,
                          const std::string &password);
 

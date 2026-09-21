@@ -131,6 +131,47 @@ http::Request get_request(const std::string &url, int timeout_sec = 10) {
   return req;
 }
 
+// "host" normally, "host:port" when the port is not the scheme's default --
+// a portal on another port of the same machine is still another portal.
+std::string authority_of(const std::string &url) {
+  util::UrlParts parts = util::parse_url(url);
+  if (parts.host.empty()) return "";
+  bool default_port = (parts.scheme == "https" && parts.port == "443") ||
+                      (parts.scheme == "http" && parts.port == "80");
+  return default_port ? parts.host : parts.host + ":" + parts.port;
+}
+
+// Where a probe says the interception is happening.
+std::string intercepting_authority(const Probe &pr) {
+  if (pr.state != State::Captive) return "";
+  std::string where =
+      pr.location.empty() ? pr.probe_url : util::resolve_url(pr.probe_url, pr.location);
+  return authority_of(where);
+}
+
+} // namespace
+
+// Distinguishes "the credentials did not take" from "a different portal is now
+// in the way", which is what a network with chained logins looks like from
+// here. Reporting the second as a plain failure sends people hunting for a
+// wrong-password problem they do not have.
+std::string explain_failed_verification(const Probe &last, const std::string &submitted_to) {
+  std::string now_at = intercepting_authority(last);
+  std::string was_at = authority_of(submitted_to);
+
+  if (!now_at.empty() && !was_at.empty() && now_at != was_at) {
+    return "logged in to " + was_at + ", but the network is still intercepted - now by " + now_at +
+           ". That is a second authentication stage; schoolwifi handles one portal per run, so "
+           "this one needs its own credentials (see the chained-portal notes in the README)";
+  }
+  if (last.state == State::Offline) {
+    return "submitted, but the network went unreachable afterwards";
+  }
+  return "submitted, but connectivity never came up";
+}
+
+namespace {
+
 std::string first_line(const std::string &s, std::size_t limit = 200) {
   std::string cleaned;
   for (char c : s) {
@@ -452,20 +493,21 @@ void judge(http::Client &client, const Config &cfg, const http::Response &resp, 
     return;
   }
 
+  Probe last;
   for (int attempt = 1; attempt <= kVerifyAttempts; ++attempt) {
     sleep_ms(kVerifyDelayMs);
-    Probe check = probe(client, cfg);
-    if (check.state == State::Online) {
+    last = probe(client, cfg);
+    if (last.state == State::Online) {
       out->success = true;
       out->message = "verified online";
       return;
     }
     log::info("waiting for connectivity (" + std::to_string(attempt) + "/" +
-              std::to_string(kVerifyAttempts) + "): still " + state_name(check.state));
+              std::to_string(kVerifyAttempts) + "): still " + state_name(last.state));
   }
 
   out->success = false;
-  out->message = "submitted, but connectivity never came up";
+  out->message = explain_failed_verification(last, out->posted_to);
   if (!resp.body.empty()) {
     std::string t = html::title(resp.body);
     if (!t.empty()) out->message += " (portal page title: " + t + ")";
@@ -545,9 +587,11 @@ LoginResult login(http::Client &client, const Config &cfg, const std::string &pa
 
     // The portal saying "ok" is not proof the network came up; hold it to the
     // same standard as every other login path.
+    Probe last;
     for (int attempt = 1; attempt <= kVerifyAttempts; ++attempt) {
       sleep_ms(kVerifyDelayMs);
-      if (probe(client, cfg).state == State::Online) {
+      last = probe(client, cfg);
+      if (last.state == State::Online) {
         srun_result.message += "; verified online";
         return srun_result;
       }
@@ -555,8 +599,8 @@ LoginResult login(http::Client &client, const Config &cfg, const std::string &pa
                 std::to_string(kVerifyAttempts) + "): not online yet");
     }
     srun_result.success = false;
-    srun_result.message = "srun accepted the login but connectivity never came up (" +
-                          srun_result.message + ")";
+    srun_result.message = "srun accepted the login (" + srun_result.message + ") but " +
+                          explain_failed_verification(last, srun_result.posted_to);
     return srun_result;
   }
 

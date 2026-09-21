@@ -554,6 +554,51 @@ void test_netenv_parsing() {
            "disabled proxy not reported");
 }
 
+void test_chained_portal_diagnosis() {
+  section("portal::explain_failed_verification - chained portals");
+
+  auto captive_at = [](const std::string &probe_url, const std::string &location) {
+    sw::portal::Probe pr;
+    pr.state = sw::portal::State::Captive;
+    pr.probe_url = probe_url;
+    pr.location = location;
+    return pr;
+  };
+
+  // Same portal still in the way: the credentials are the suspect.
+  sw::portal::Probe same = captive_at("http://captive.apple.com/hotspot-detect.html",
+                                      "https://w.bnbu.edu.cn/index_1.html");
+  std::string msg = sw::portal::explain_failed_verification(
+      same, "https://w.bnbu.edu.cn/cgi-bin/srun_portal");
+  check(sw::util::icontains(msg, "connectivity never came up"),
+        "same portal -> plain verification failure");
+  check(!sw::util::icontains(msg, "second authentication"),
+        "same portal is not reported as a second stage");
+
+  // A different portal took over: that is a second stage, not a bad password.
+  sw::portal::Probe other = captive_at("http://captive.apple.com/hotspot-detect.html",
+                                       "http://10.20.30.40/unicom/login");
+  msg = sw::portal::explain_failed_verification(other, "https://w.bnbu.edu.cn/cgi-bin/srun_portal");
+  check(sw::util::icontains(msg, "second authentication"), "different portal -> second stage");
+  check(sw::util::icontains(msg, "w.bnbu.edu.cn"), "names the portal we logged in to");
+  check(sw::util::icontains(msg, "10.20.30.40"), "names the portal now intercepting");
+
+  // Same host, different port is still a different portal.
+  sw::portal::Probe other_port =
+      captive_at("http://captive.apple.com/hotspot-detect.html", "http://10.0.0.1:8080/second");
+  msg = sw::portal::explain_failed_verification(other_port, "http://10.0.0.1/first");
+  check(sw::util::icontains(msg, "second authentication"),
+        "a different port counts as a different portal");
+
+  // The link died outright rather than a portal appearing.
+  sw::portal::Probe gone;
+  gone.state = sw::portal::State::Offline;
+  msg = sw::portal::explain_failed_verification(gone, "https://w.bnbu.edu.cn/cgi-bin/srun_portal");
+  check(sw::util::icontains(msg, "unreachable"), "offline afterwards is reported as such");
+  check(!sw::util::icontains(msg, "second authentication"),
+        "offline is not mistaken for a second stage");
+}
+
 void test_form_encoding() {
   section("util::form_encode");
   sw::util::Pairs pairs = {{"user", "20210001"}, {"pwd", "p@ss word&x"}};
@@ -615,6 +660,7 @@ int main() {
   test_srun_response_parsing();
   test_srun_portal_detection();
   test_netenv_parsing();
+  test_chained_portal_diagnosis();
   test_form_encoding();
   test_config_roundtrip();
 

@@ -300,6 +300,34 @@ probe_timeout = 2
 本身往往就是门户。只有当网关返回的页面确实像登录页（有密码框或跳转）时才会
 认定为门户，避免把普通路由器管理页误判成认证页。
 
+### 需要连续过两道认证（比如校园网 + 运营商宽带）
+
+有些宿舍网是**两级认证**：先过校园网门户，再过一个运营商（联通/电信/移动）的
+宽带认证。两道门户的账号密码通常是不一样的。
+
+`schoolwifi` **一次只处理一道门户**。如果第一道过了、第二道接管，你会看到：
+
+```
+ERROR login failed: srun accepted the login (srun: login_ok) but logged in to
+      w.example.edu.cn, but the network is still intercepted - now by
+      10.20.30.40. That is a second authentication stage; ...
+```
+
+这条信息说明第一道**成功了**，问题在第二道——不是密码错了。目前的办法是给第二道
+单独准备一份配置，手动跑一次：
+
+```bash
+schoolwifi login                        # 第一道：校园网
+schoolwifi -c ~/.config/schoolwifi/stage2.ini login   # 第二道：运营商
+```
+
+`stage2.ini` 用 `schoolwifi -c ~/.config/schoolwifi/stage2.ini diagnose` 的输出来填，
+账号密码另存钥匙串（在 `[account]` 里把 `keychain_service` 设成别的名字，
+比如 `schoolwifi-unicom`，再跑一次 `setup`）。
+
+> 一次命令自动串完两道认证的支持还没做。如果你有这种网络，欢迎提 issue 带上
+> （脱敏后的）两道门户的 `diagnose` 输出。
+
 ### 门户页面能打开，但登录没反应
 
 先跑 `schoolwifi diagnose` 看 `== forms ==` 段有没有识别到表单，

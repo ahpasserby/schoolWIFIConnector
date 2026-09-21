@@ -119,6 +119,12 @@ them away.
 - Each failed probe costs a full `probe_timeout`, so those failures log at
   **info**, not debug. A command that prints nothing for 15 seconds reads as a
   hang, and that is exactly how it was first reported.
+- Some networks chain two portals (campus, then an ISP). `judge()` therefore
+  compares the authority (`host`, plus `:port` when non-default) of the portal
+  it submitted to against the one intercepting afterwards, and says so when
+  they differ — otherwise a successful first-stage login is reported as a
+  generic failure and looks like a wrong password. Chaining them automatically
+  is not implemented; the documented workaround is a second config file.
 - A 200 response does not mean online. Portals frequently intercept without
   redirecting, answering 200 with a splash page — this is what BNBU does. For
   probe URLs with a known success payload the marker settles it; for any other
