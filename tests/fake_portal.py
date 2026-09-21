@@ -146,7 +146,9 @@ class Portal(BaseHTTPRequestHandler):
             self._send(200,
                        '{"code":0,"errormsg":"success","msg":"",'
                        '"licenseCode":"LIC-123","userGroupId":42,"guestManagerId":"gm-9",'
-                       '"validationType":0,"defaultServiceTypeId":-1,"serviceList":[],'
+                       '"validationType":0,"defaultServiceTypeId":7,'
+                       '"serviceList":[{"value":7,"label":"校园网"},'
+                       '{"value":9,"label":"中国联通"}],'
                        '"passwordIntervalTime":60}',
                        ctype="application/json")
             return
@@ -316,6 +318,12 @@ class Portal(BaseHTTPRequestHandler):
             return
         if payload.get("wlannasid") != "nas-7":
             reject("E0005 wlannasid missing", "byod-wlannasid")
+            return
+        # The account is only valid for one of the offered services, which is
+        # what E63018 reports when it is wrong.
+        if payload.get("serviceSuffixId") != "9":
+            reject("E63018: user does not exist or has not subscribed to this service",
+                   "byod-service")
             return
 
         state["online"] = True

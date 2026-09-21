@@ -207,7 +207,9 @@ username = 20210001
 [portal]
 probe_urls = http://127.0.0.1:$BYOD_PORT/probe
 failure_contains = ERROR:
+service_suffix_id = 9
 INI
+
 
 if SCHOOLWIFI_PASSWORD='s3cr3t p@ss' "$BIN" --config "$BYOD_CONFIG" login >"$WORK/byod-login.log" 2>&1; then
   ok "byod login succeeds"
@@ -243,6 +245,23 @@ if grep -q "password is incorrect" "$WORK/byod-bad.log" \
 else
   bad "a wrong password surfaces the controller's own error code"
 fi
+# The portal's default service is the wrong one for this account, which is what
+# E63018 reports. Without naming the alternatives that error is a dead end.
+cat > "$WORK/byod-default-service.ini" <<INI
+[network]
+interface =
+[account]
+username = 20210001
+[portal]
+probe_urls = http://127.0.0.1:$BYOD_PORT/probe
+INI
+SCHOOLWIFI_PASSWORD='s3cr3t p@ss' "$BIN" --config "$WORK/byod-default-service.ini" \
+  login >"$WORK/byod-service.log" 2>&1
+grep -q "portal offers services: 7=" "$WORK/byod-service.log" \
+  && ok "lists the services the portal offers" || bad "lists the services the portal offers"
+grep -q "set service_suffix_id" "$WORK/byod-service.log" \
+  && ok "E63018 says which config key to reach for" \
+  || bad "E63018 says which config key to reach for"
 
 # The captured init response must reach the diagnose dump: on a network nobody
 # can reach twice, it is the only record of what the portal actually answered.

@@ -10,6 +10,7 @@
 #include <thread>
 #include <vector>
 
+#include "sw/byod.hpp"
 #include "sw/config.hpp"
 #include "sw/dns.hpp"
 #include "sw/html.hpp"
@@ -442,6 +443,30 @@ int cmd_diagnose(const sw::Config &cfg) {
     }
   }
 
+  // A BYOD login page decides nothing in HTML: what matters is the policy its
+  // JavaScript fetches, and which service the account has to be filed under.
+  std::string byod_policy_raw;
+  if (sw::byod::looks_like_login_page(page.url, page.html)) {
+    std::printf("\n== byod login policy ==\n");
+    sw::byod::Policy policy = sw::byod::fetch_policy(client, cfg, page.url);
+    if (!policy.ok) {
+      std::printf("  could not fetch it: %s\n", policy.message.c_str());
+    } else {
+      byod_policy_raw = policy.raw;
+      std::printf("  defaultServiceTypeId : %s\n",
+                  policy.default_service_id.empty() ? "(absent)" : policy.default_service_id.c_str());
+      if (policy.services.empty()) {
+        std::printf("  serviceList          : (empty -- the portal offers no choice)\n");
+      } else {
+        std::printf("  serviceList          :\n");
+        for (const sw::byod::Service &svc : policy.services) {
+          std::printf("      service_suffix_id = %-6s  %s\n", svc.value.c_str(), svc.label.c_str());
+        }
+        std::printf("  Set service_suffix_id under [portal] to pick one.\n");
+      }
+    }
+  }
+
   std::printf("\n== what login would submit ==\n");
   sw::portal::FormPlan plan =
       sw::portal::plan_form_login(cfg, page, cfg.username.empty() ? "<username>" : cfg.username,
@@ -472,6 +497,11 @@ int cmd_diagnose(const sw::Config &cfg) {
 
   std::printf("\n== saved ==\n");
   std::printf("  %s/portal.html\n", dir.c_str());
+
+  if (!byod_policy_raw.empty() &&
+      sw::util::write_file(dir + "/byod-login-init.json", byod_policy_raw)) {
+    std::printf("  %s/byod-login-init.json  (%zu bytes)\n", dir.c_str(), byod_policy_raw.size());
+  }
 
   for (const auto &capture : page.captures) {
     std::string path = dir + "/" + capture.first;

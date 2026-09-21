@@ -719,6 +719,21 @@ void test_byod_login_payload() {
             R"(<input type="password" id="id_userPwd"></body></html>)"),
         "ids alone do not make it a BYOD login page");
 
+  // E63018 means "unknown account OR wrong service", so the choices matter.
+  const std::string policy_with_services =
+      R"({"code":0,"defaultServiceTypeId":7,)"
+      R"("serviceList":[{"value":7,"label":"校园网"},{"value":9,"label":"中国联通"}]})";
+  std::vector<sw::byod::Service> services = sw::byod::parse_service_list(policy_with_services);
+  check(services.size() == 2, "both services parsed");
+  if (services.size() == 2) {
+    check_eq(services[0].value, "7", "first service id");
+    check_eq(services[0].label, "校园网", "first service label");
+    check_eq(services[1].value, "9", "second service id");
+  }
+  check(sw::byod::parse_service_list(R"({"serviceList":[]})").empty(),
+        "an empty list yields nothing");
+  check(sw::byod::parse_service_list(R"({"code":0})").empty(), "a missing list yields nothing");
+
   // And the generic planner must still refuse it, naming the fields.
   sw::portal::LoginPage page;
   page.url = "http://10.0.0.1:30004/byod/view/byod/template/templatePc.html";

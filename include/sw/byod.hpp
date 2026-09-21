@@ -1,6 +1,7 @@
 #pragma once
 
 #include <string>
+#include <vector>
 
 #include "sw/config.hpp"
 #include "sw/http.hpp"
@@ -41,6 +42,26 @@ bool looks_like_login_page(const std::string &url, const std::string &html);
 // ASCII only -- the portal's own escape for non-ASCII is not reproduced, and
 // `ascii_only` reports whether that matters for this password.
 std::string encode_password(const std::string &password, bool *ascii_only);
+
+// The services (operators, usually) the portal offers. serviceSuffixId must
+// name one of these; -1 means "the portal offers no choice". Getting it wrong
+// produces E63018, which also happens to be what a wrong account produces.
+struct Service {
+  std::string value;
+  std::string label;
+};
+std::vector<Service> parse_service_list(const std::string &policy_json);
+
+// Fetches /byod/byodrs/login/init. Exposed so `diagnose` can show what the
+// login would have to choose between without attempting a login.
+struct Policy {
+  bool ok = false;
+  std::string raw;
+  std::string default_service_id;
+  std::vector<Service> services;
+  std::string message;
+};
+Policy fetch_policy(http::Client &client, const Config &cfg, const std::string &page_url);
 
 portal::LoginResult login(http::Client &client, const Config &cfg, const portal::LoginPage &page,
                           const std::string &password);

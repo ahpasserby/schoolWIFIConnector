@@ -187,6 +187,7 @@ SCHOOLWIFI_PASSWORD='xxx' schoolwifi -v login
 | `probe_urls` | 连通性探测地址，逗号分隔 | Apple / 华为 / 微软三个检测地址 |
 | `probe_timeout` | 每个探测地址等多少秒。网络会丢包（而不是明确拒绝）时，这个值决定了命令要等多久 | `5` |
 | `user_agent` | 伪装的 UA。有些门户对未知 UA 会返回坏掉的页面 | 内置 Safari UA |
+| `service_suffix_id` | 仅华为 BYOD：账号属于哪个"服务"（通常是运营商）。留空用门户默认值。报 `E63018` 时多半要改这个 | 空 |
 | `http_method` | 仅 `raw` 模式：`POST` 或 `GET` | `POST` |
 | `post_body` | 仅 `raw` 模式：请求体模板。占位符 `{username}` `{password}`，URL 编码版 `{username\|url}` `{password\|url}` | 空 |
 
@@ -238,6 +239,26 @@ INFO  connected: srun: login_ok; verified online
 login_method = srun
 login_url = https://w.example.edu.cn/srun_portal_pc?ac_id=1
 ```
+
+#### 华为 BYOD 报 `E63018: 用户不存在或者用户没有申请该服务`
+
+这个错误码**同时**覆盖两种情况：账号在这一层不存在，或者账号没订阅所选的「服务」。
+工具会把门户提供的服务列表打出来：
+
+```
+INFO  byod: portal offers services: 7=校园网, 9=中国联通
+INFO  byod: using serviceSuffixId 7 (the portal's default)
+ERROR ... set service_suffix_id under [portal] to try another
+```
+
+按需指定：
+
+```ini
+[portal]
+service_suffix_id = 9
+```
+
+`schoolwifi diagnose` 的 `== byod login policy ==` 段也会列出全部选项。
 
 > 已知限制：如果门户开了**图形验证码**，目前不支持，只能用 `schoolwifi open` 手动登录。
 

@@ -124,6 +124,63 @@ std::string json_string(const std::string &value) {
 
 } // namespace
 
+std::vector<Service> parse_service_list(const std::string &policy_json) {
+  std::vector<Service> services;
+
+  std::size_t list = policy_json.find("\"serviceList\"");
+  if (list == std::string::npos) return services;
+  std::size_t open = policy_json.find('[', list);
+  std::size_t close = policy_json.find(']', open);
+  if (open == std::string::npos || close == std::string::npos) return services;
+
+  std::string body = policy_json.substr(open + 1, close - open - 1);
+  std::size_t pos = 0;
+  while ((pos = body.find('{', pos)) != std::string::npos) {
+    std::size_t end = body.find('}', pos);
+    if (end == std::string::npos) break;
+    std::string entry = body.substr(pos, end - pos + 1);
+
+    Service service;
+    service.value = util::json_field(entry, "value");
+    service.label = util::json_field(entry, "label");
+    if (!service.value.empty()) services.push_back(service);
+    pos = end + 1;
+  }
+  return services;
+}
+
+Policy fetch_policy(http::Client &client, const Config &cfg, const std::string &page_url) {
+  Policy policy;
+  std::string origin = util::url_origin(page_url);
+  if (origin.empty()) {
+    policy.message = "could not determine the portal's origin from " + page_url;
+    return policy;
+  }
+
+  std::string scheme = util::parse_url(page_url).scheme;
+  std::string url = origin + "/byod/byodrs/login/init?hp=" + (scheme == "https" ? "0" : "1");
+
+  http::Request req;
+  req.url = url;
+  req.method = "GET";
+  req.follow = true;
+  req.timeout_sec = cfg.probe_timeout > 0 ? cfg.probe_timeout * 2 : 12;
+  req.referer = page_url;
+  req.extra_headers.push_back("X-Requested-With: XMLHttpRequest");
+
+  http::Response resp = client.send(req);
+  if (!resp.ok) {
+    policy.message = "byod login/init failed: " + resp.error;
+    return policy;
+  }
+
+  policy.raw = resp.body;
+  policy.default_service_id = util::json_field(resp.body, "defaultServiceTypeId");
+  policy.services = parse_service_list(resp.body);
+  policy.ok = true;
+  return policy;
+}
+
 portal::LoginResult login(http::Client &client, const Config &cfg, const portal::LoginPage &page,
                           const std::string &password) {
   portal::LoginResult result;
@@ -138,28 +195,33 @@ portal::LoginResult login(http::Client &client, const Config &cfg, const portal:
   // Step 1: the page's own init call, for the licence and policy identifiers
   // the login request has to echo back.
   std::string scheme = util::parse_url(page.url).scheme;
-  std::string init_url = origin + "/byod/byodrs/login/init?hp=" + (scheme == "https" ? "0" : "1");
-  log::info("byod: fetching login policy from " + init_url);
+  log::info("byod: fetching login policy from " + origin + "/byod/byodrs/login/init");
 
-  http::Request init_req;
-  init_req.url = init_url;
-  init_req.method = "GET";
-  init_req.follow = true;
-  init_req.timeout_sec = 12;
-  init_req.referer = page.url;
-  init_req.extra_headers.push_back("X-Requested-With: XMLHttpRequest");
-
-  http::Response init_resp = client.send(init_req);
-  if (!init_resp.ok) {
-    result.message = "byod login/init failed: " + init_resp.error;
+  Policy policy_result = fetch_policy(client, cfg, page.url);
+  if (!policy_result.ok) {
+    result.message = policy_result.message;
     return result;
   }
-  const std::string &policy = init_resp.body;
+  const std::string &policy = policy_result.raw;
 
   // serviceSuffixId is -1 unless the portal offers a service list with a
-  // default, exactly as templatePc.js decides it.
-  std::string service = util::json_field(policy, "defaultServiceTypeId");
+  // default, exactly as templatePc.js decides it. A configured value wins:
+  // when a portal offers several operators, only the user knows which account
+  // belongs to which.
+  std::string service = cfg.service_suffix_id;
+  if (service.empty()) service = policy_result.default_service_id;
   if (service.empty()) service = "-1";
+
+  if (!policy_result.services.empty()) {
+    std::string listing;
+    for (const Service &svc : policy_result.services) {
+      if (!listing.empty()) listing += ", ";
+      listing += svc.value + "=" + svc.label;
+    }
+    log::info("byod: portal offers services: " + listing);
+    log::info("byod: using serviceSuffixId " + service +
+              (cfg.service_suffix_id.empty() ? " (the portal's default)" : " (from the config)"));
+  }
 
   // shopIdE and wlannasid come from the earlier /byod/byodrs/init response,
   // which resolve_login_page captured on the way here.
@@ -231,6 +293,19 @@ portal::LoginResult login(http::Client &client, const Config &cfg, const portal:
   result.message = "byod rejected the login";
   if (!msg.empty()) result.message += ": " + msg;
   else if (!code.empty()) result.message += " (code " + code + ")";
+
+  // E63018 covers both "wrong account" and "right account, wrong service", so
+  // spell out the choice rather than leaving the user to guess which it was.
+  if (util::icontains(msg, "E63018") && !policy_result.services.empty()) {
+    std::string listing;
+    for (const Service &svc : policy_result.services) {
+      if (!listing.empty()) listing += ", ";
+      listing += svc.value + "=" + svc.label;
+    }
+    result.message += ". That code means either the account is unknown here or it has not "
+                      "subscribed to service " + service + ". The portal offers: " + listing +
+                      " -- set service_suffix_id under [portal] to try another";
+  }
   return result;
 }
 

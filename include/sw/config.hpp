@@ -38,6 +38,9 @@ struct Config {
   std::vector<std::string> probe_urls;
   int probe_timeout = 5;  // seconds per connectivity-check request
   std::string user_agent;
+  // Huawei BYOD portals: which service (operator) the account belongs to.
+  // Empty uses the portal's own default.
+  std::string service_suffix_id;
 
   // [watch]
   int online_interval = 30;   // seconds between probes while online
