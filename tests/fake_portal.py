@@ -42,6 +42,8 @@ SRUN_PAGE = """<!DOCTYPE html><html><head>
   <div class="panel-row"><input type="password" id="password" class="input-box"></div>
   <button type="button" class="btn-login" id="login-account">Login</button>
 </div>
+<script type="text/javascript" src="/static/portal-logic.js?_=00001"></script>
+<script type="text/javascript" src="https://cdn.example.invalid/jquery.min.js"></script>
 <script>
     var CONFIG = {
         page   : 'account',
@@ -94,6 +96,13 @@ class Portal(BaseHTTPRequestHandler):
             self._send(200, '<html><head><meta http-equiv="refresh" '
                             'content="0;url=/srun_portal_pc?ac_id=1&theme=pro">'
                             '</head><body>redirecting</body></html>')
+            return
+
+        if path == "/static/portal-logic.js":
+            # Stands in for the JS a real portal keeps its login logic in; the
+            # point of the test is that `diagnose` saves it alongside the page.
+            self._send(200, "function srunLogin(){/* portal logic lives here */}",
+                       ctype="application/javascript")
             return
 
         if path == "/srun_portal_pc":

@@ -33,6 +33,10 @@ std::string meta_refresh_url(const std::string &html);
 std::string js_redirect_url(const std::string &html);
 std::string iframe_src(const std::string &html);
 
+// Every <script src="..."> on the page, in document order. A portal whose
+// logic lives entirely in JavaScript leaves nothing else to go on.
+std::vector<std::string> script_srcs(const std::string &html);
+
 std::string title(const std::string &html);
 std::string tag_attr(const std::string &tag, const std::string &attr);
 

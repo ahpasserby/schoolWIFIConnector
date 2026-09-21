@@ -68,7 +68,7 @@ grep -q "password_field = userPwd" <<<"$out" && ok "identifies userPwd" || bad "
 grep -q "csrfToken" <<<"$out" && ok "sees the hidden CSRF token" || bad "sees the hidden CSRF token"
 grep -q "\*\*\*\*\*\*\*\*" <<<"$out" && ok "masks the password in diagnostics" || bad "masks the password in diagnostics"
 grep -q "<password>" <<<"$out" && bad "leaks a password placeholder into the plan" || ok "no password value in the plan"
-rm -f "$ROOT"/schoolwifi-portal-*.html
+rm -rf "$ROOT"/schoolwifi-diagnose-*
 
 # 3. login actually authenticates.
 if "$BIN" --config "$CONFIG" login >"$WORK/login.log" 2>&1; then
@@ -139,7 +139,21 @@ out="$("$BIN" --config "$SRUN_CONFIG" diagnose 2>&1)"
 grep -q "javascript redirect" <<<"$out" && ok "follows the injected JS redirect" || bad "follows the injected JS redirect"
 grep -q "srun_portal_pc" <<<"$out" && ok "reaches the srun SPA" || bad "reaches the srun SPA"
 grep -q "(none found)" <<<"$out" && ok "correctly finds no HTML form" || bad "correctly finds no HTML form"
-rm -f "$ROOT"/schoolwifi-portal-*.html
+
+# A portal with no form keeps its logic in JS, so diagnose must save that JS.
+dump=$(ls -d "$ROOT"/schoolwifi-diagnose-* 2>/dev/null | head -1)
+if [[ -n "$dump" && -f "$dump/portal.html" ]]; then
+  ok "diagnose saved the portal page"
+else
+  bad "diagnose saved the portal page"
+fi
+if [[ -n "$dump" ]] && ls "$dump"/*portal-logic.js >/dev/null 2>&1; then
+  ok "diagnose fetched the portal's same-origin script"
+else
+  bad "diagnose fetched the portal's same-origin script"
+fi
+grep -q "not same-origin" <<<"$out" && ok "skips third-party scripts" || bad "skips third-party scripts"
+rm -rf "$ROOT"/schoolwifi-diagnose-*
 
 if "$BIN" --config "$SRUN_CONFIG" login >"$WORK/srun-login.log" 2>&1; then
   ok "srun login succeeds"

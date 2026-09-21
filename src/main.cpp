@@ -441,12 +441,57 @@ int cmd_diagnose(const sw::Config &cfg) {
     }
   }
 
-  if (!page.html.empty()) {
-    std::string out = "schoolwifi-portal-" + sw::util::now_compact() + ".html";
-    if (sw::util::write_file(out, page.html)) {
-      std::printf("\nSaved the raw portal page to %s\n", out.c_str());
+  if (page.html.empty()) return 0;
+
+  // A portal whose page carries no form and no redirect keeps its logic in
+  // JavaScript. The page alone is then useless for working out what to submit,
+  // so save the scripts it loads next to it.
+  std::string dir = "schoolwifi-diagnose-" + sw::util::now_compact();
+  bool saved_page = sw::util::write_file(dir + "/portal.html", page.html);
+  if (!saved_page) {
+    std::fprintf(stderr, "\nCould not write %s/\n", dir.c_str());
+    return 0;
+  }
+
+  std::printf("\n== saved ==\n");
+  std::printf("  %s/portal.html\n", dir.c_str());
+
+  std::string origin = sw::util::url_origin(page.url);
+  int index = 0;
+  for (const std::string &src : sw::html::script_srcs(page.html)) {
+    std::string url = sw::util::resolve_url(page.url, src);
+    // Same-origin only: the point is the portal's own code, and fetching from
+    // third-party hosts would both leak the request and pull in noise.
+    if (sw::util::url_origin(url) != origin) {
+      std::printf("  (skipped, not same-origin) %s\n", url.c_str());
+      continue;
+    }
+
+    sw::http::Response resp = client.get(url, /*follow=*/true, 10);
+    if (!resp.ok || resp.body.empty()) {
+      std::printf("  (failed) %s -- %s\n", url.c_str(),
+                  resp.error.empty() ? "empty response" : resp.error.c_str());
+      continue;
+    }
+
+    // Name files by load order so the bootstrap chain stays readable.
+    std::string base = url;
+    std::size_t cut = base.find_first_of("?#");
+    if (cut != std::string::npos) base = base.substr(0, cut);
+    std::size_t slash = base.rfind('/');
+    if (slash != std::string::npos) base = base.substr(slash + 1);
+    if (base.empty()) base = "script.js";
+
+    char prefix[8];
+    std::snprintf(prefix, sizeof(prefix), "%02d-", ++index);
+    std::string path = dir + "/" + prefix + base;
+    if (sw::util::write_file(path, resp.body)) {
+      std::printf("  %s  (%zu bytes)\n", path.c_str(), resp.body.size());
     }
   }
+
+  std::printf("\nThis folder contains the portal's own code, and the page URL\n");
+  std::printf("carries your IP and MAC. Redact before sharing it anywhere public.\n");
   return 0;
 }
 

@@ -161,6 +161,26 @@ void test_redirect_hints() {
 
   check_eq(sw::html::iframe_src(R"(<iframe src="about:blank"></iframe><iframe src="/real.jsp">)"),
            "/real.jsp", "iframe skips about:blank");
+  check_eq(sw::html::iframe_src(R"(<frameset><frame src="/login.asp"></frameset>)"), "/login.asp",
+           "a plain <frame> counts too");
+
+  section("html::script_srcs");
+  // Shaped like the real BYOD portal: an empty body and a chain of scripts.
+  const std::string byod = R"(<!doctype html><html><head><title>BYOD</title></head>
+<body><div id="tip"></div></body>
+<script type="text/javascript" src="/byod/resources/byod/common/js/customCommon.js" charset="utf-8"></script>
+<script type="text/javascript" src="https://cdn.example.com/jquery.min.js"></script>
+<script type="text/javascript" src="/byod/resources/byod/index.js?_=00001"></script>
+<script>var inline = 1;</script>
+</html>)";
+  std::vector<std::string> scripts = sw::html::script_srcs(byod);
+  check(scripts.size() == 3, "three external scripts found, inline one ignored");
+  if (scripts.size() == 3) {
+    check_eq(scripts[0], "/byod/resources/byod/common/js/customCommon.js", "first script, in order");
+    check_eq(scripts[2], "/byod/resources/byod/index.js?_=00001", "query string preserved");
+  }
+  check(sw::html::script_srcs("<html><body>nothing</body></html>").empty(),
+        "no scripts yields nothing");
 }
 
 void test_field_identification() {

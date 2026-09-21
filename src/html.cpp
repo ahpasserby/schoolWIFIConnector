@@ -248,14 +248,31 @@ std::string js_redirect_url(const std::string &html) {
 }
 
 std::string iframe_src(const std::string &html) {
-  for (std::size_t p = find_tag(html, "iframe", 0); p != std::string::npos;
-       p = find_tag(html, "iframe", p + 1)) {
+  // <frame> as well as <iframe>: portals old enough to use a frameset are
+  // still in service, and the login page is the frame they point at.
+  for (const char *tag_name : {"iframe", "frame"}) {
+    for (std::size_t p = find_tag(html, tag_name, 0); p != std::string::npos;
+         p = find_tag(html, tag_name, p + 1)) {
+      std::size_t end = tag_end(html, p);
+      if (end == std::string::npos) break;
+      std::string src = tag_attr(html.substr(p, end - p + 1), "src");
+      if (!src.empty() && src != "about:blank") return src;
+    }
+  }
+  return "";
+}
+
+std::vector<std::string> script_srcs(const std::string &html) {
+  std::vector<std::string> out;
+  for (std::size_t p = find_tag(html, "script", 0); p != std::string::npos;
+       p = find_tag(html, "script", p + 1)) {
     std::size_t end = tag_end(html, p);
     if (end == std::string::npos) break;
     std::string src = tag_attr(html.substr(p, end - p + 1), "src");
-    if (!src.empty() && src != "about:blank") return src;
+    if (!src.empty()) out.push_back(src);
+    p = end;
   }
-  return "";
+  return out;
 }
 
 std::string title(const std::string &html) {

@@ -167,6 +167,14 @@ them away.
   `wifi::interfaces()`: a bad value there fails much later with an error that
   looks nothing like the typo that caused it.
 
+Portals whose page carries no form and no redirect hint keep their logic in
+JavaScript, which this tool cannot execute. `diagnose` therefore saves
+`schoolwifi-diagnose-<ts>/` containing the page plus every **same-origin**
+`<script src>`, numbered in load order — third-party hosts are skipped so the
+dump stays the portal's own code and no request leaks elsewhere. That folder is
+the starting point for adding support for a new portal family, the way
+`srun.cpp` came about.
+
 ## Testing without a campus network
 
 `tests/fake_portal.py` reproduces the full gateway behaviour — 302 → splash →

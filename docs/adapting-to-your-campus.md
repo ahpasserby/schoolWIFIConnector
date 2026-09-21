@@ -39,10 +39,20 @@ page title: 校园网认证
   password_field = userPwd
 ```
 
-同时它会把门户原始 HTML 存成 `schoolwifi-portal-<时间戳>.html`，
-自动识别搞不定的时候可以直接翻这个文件。
+同时它会把现场存进 `schoolwifi-diagnose-<时间戳>/`：
 
-> 这个 HTML 里可能含有你的 IP、MAC、会话 ID。**提 issue 前记得先脱敏。**
+```
+schoolwifi-diagnose-20260922-001231/
+├── portal.html          门户页面本身
+├── 01-customCommon.js   页面加载的同源脚本，按加载顺序编号
+└── 02-index.js
+```
+
+`== forms ==` 显示 `(none found)` 时，答案基本都在这些 JS 里 —— 很多门户
+（华为 BYOD、深澜等）页面上是空的，登录逻辑全在脚本里。第三方 CDN 上的脚本
+不会被抓取。
+
+> 这些文件和页面 URL 里含有你的 IP、MAC、会话 ID。**提 issue 前记得先脱敏。**
 
 ## 常见情况
 
