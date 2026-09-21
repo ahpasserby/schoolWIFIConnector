@@ -27,6 +27,17 @@ struct Interference {
 
 Interference detect();
 
+// Whether the machine has actually joined a network. A captive portal and a
+// missing DHCP lease both leave every request failing, but they need opposite
+// responses, and the portal-facing advice is actively misleading when nothing
+// was ever joined. Pure, so it can be tested.
+struct LinkState {
+  bool up = true;
+  std::string reason;  // set when up == false
+};
+LinkState assess_link(bool wifi_power_on, const std::string &interface_name,
+                      const std::string &ipv4, const std::string &gateway);
+
 // Split out for testing.
 std::string parse_default_route_interface(const std::string &netstat_output);
 // The IPv4 default gateway. On a campus or dorm network this is very often the

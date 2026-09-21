@@ -126,6 +126,11 @@ them away.
   `http://<default gateway>/`, and escalates to Captive only when that page
   actually looks like a portal (password field or redirect hint) — a plain
   router admin page must not send `login` off to submit credentials to it.
+- **A missing DHCP lease looks exactly like a captive portal** from inside
+  `probe()`: every name fails to resolve and nothing answers. `netenv::
+  assess_link` separates them, and `login` checks it *before* offering any
+  DNS advice — telling someone to configure `dns_server` when they simply have
+  not joined a network sends them to debug the wrong thing entirely.
 - Each failed probe costs a full `probe_timeout`, so those failures log at
   **info**, not debug. A command that prints nothing for 15 seconds reads as a
   hang, and that is exactly how it was first reported.

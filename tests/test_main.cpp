@@ -681,6 +681,25 @@ void test_netenv_parsing() {
   check(!sw::netenv::is_tunnel_interface("en0"), "en0 is not a tunnel");
   check(!sw::netenv::is_tunnel_interface("lo0"), "lo0 is not a tunnel");
 
+  section("netenv::assess_link");
+  // The dorm case: no lease at all. Every hostname then fails to resolve,
+  // which used to be reported as a DNS problem worth configuring around.
+  sw::netenv::LinkState link = sw::netenv::assess_link(true, "en0", "", "");
+  check(!link.up, "no address and no route means the network was never joined");
+  check(sw::util::icontains(link.reason, "not been joined"), "reason says so plainly");
+  check(!sw::util::icontains(link.reason, "DNS"), "reason does not send the user to DNS");
+
+  link = sw::netenv::assess_link(false, "en0", "", "");
+  check(!link.up, "Wi-Fi off is also down");
+  check(sw::util::icontains(link.reason, "switched off"), "reason names the real cause");
+
+  check(sw::netenv::assess_link(true, "en0", "172.29.26.219", "172.29.26.1").up,
+        "an address and a route means the link is up");
+  check(sw::netenv::assess_link(true, "en0", "172.29.26.219", "").up,
+        "an address alone is enough");
+  check(sw::netenv::assess_link(false, "en0", "", "10.0.0.1").up,
+        "a route alone is enough, Wi-Fi off notwithstanding");
+
   const std::string proxy =
       "<dictionary> {\n  HTTPEnable : 1\n  HTTPPort : 7897\n  HTTPProxy : 127.0.0.1\n"
       "  HTTPSEnable : 0\n  SOCKSEnable : 0\n}\n";

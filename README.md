@@ -286,6 +286,21 @@ dns_server = 10.253.0.1
 sudo networksetup -setdnsservers Wi-Fi Empty
 ```
 
+### `no network path at all` / 所有域名都解析不了
+
+先看 `schoolwifi status` 有没有 IPv4 地址：
+
+```
+IPv4         (none)
+Link         no IPv4 address on en0 and no default route -- the network has not
+             been joined yet (DHCP may still be running)
+```
+
+出现 `Link` 这一行说明**机器压根还没连上网**（Wi-Fi 没关联，或刚切换网络、
+DHCP 还没完成），不是门户或 DNS 的问题。等几秒、看到 IP 地址再试。
+
+刚切换 Wi-Fi 之后马上跑命令很容易撞上这个。
+
 ### 命令看起来卡住了，十几秒没反应
 
 多半不是卡死，是在等超时。如果网络把探测请求**静默丢包**（既不回应也不拒绝），

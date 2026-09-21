@@ -167,6 +167,10 @@ int cmd_status(const sw::Config &cfg) {
     std::printf("Detail       %s\n", pr.error.empty() ? "no route to the probe hosts" : pr.error.c_str());
   }
 
+  sw::netenv::LinkState link = sw::netenv::assess_link(
+      info.power_on, info.interface, info.ipv4, sw::netenv::default_gateway());
+  if (!link.up) std::printf("Link         %s\n", link.reason.c_str());
+
   std::printf("Config       %s\n", cfg.source_path.empty() ? "(defaults, no file)" : cfg.source_path.c_str());
   return pr.state == sw::portal::State::Online ? 0 : 1;
 }
@@ -196,6 +200,18 @@ int cmd_login(const sw::Config &cfg) {
     return 0;
   }
   sw::log::error("login failed: " + res.message);
+
+  // Check this before blaming DNS: with no lease every name fails to resolve,
+  // and pointing at dns_server sends people to debug the wrong thing.
+  sw::netenv::LinkState link = sw::netenv::assess_link(
+      info.power_on, info.interface, info.ipv4, sw::netenv::default_gateway());
+  if (!link.up) {
+    sw::log::info(link.reason);
+    sw::log::info("  - nothing here is a portal problem yet; wait for an IP address");
+    sw::log::info("  - `schoolwifi status` shows one as soon as the network is joined");
+    return 1;
+  }
+
   if (sw::dns::is_resolve_failure(res.message)) {
     sw::log::info("the portal's hostname did not resolve, even via this network's DNS");
     sw::log::info("  - check `schoolwifi diagnose` for the dns section");

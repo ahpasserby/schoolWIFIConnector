@@ -126,6 +126,24 @@ std::string parse_system_proxy(const std::string &scutil_proxy_output) {
   return util::join(active, ", ");
 }
 
+LinkState assess_link(bool wifi_power_on, const std::string &interface_name,
+                      const std::string &ipv4, const std::string &gateway) {
+  LinkState state;
+  std::string iface = interface_name.empty() ? "the Wi-Fi interface" : interface_name;
+
+  // An address or a route is enough: a wired or tethered machine may have one
+  // without Wi-Fi being on at all.
+  if (!ipv4.empty() || !gateway.empty()) return state;
+
+  state.up = false;
+  state.reason = wifi_power_on
+                     ? "no IPv4 address on " + iface +
+                           " and no default route -- the network has not been joined yet "
+                           "(DHCP may still be running)"
+                     : "Wi-Fi is switched off on " + iface;
+  return state;
+}
+
 Interference detect() {
   Interference result;
 
