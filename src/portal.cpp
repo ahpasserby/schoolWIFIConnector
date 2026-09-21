@@ -188,6 +188,23 @@ std::string explain_failed_verification(const Probe &last, const std::string &su
 
 namespace {
 
+// A portal's own explanation, taken from the form it re-renders. Several
+// families round-trip an `errormessage` (or similarly named) hidden field
+// holding exactly the text a person would have seen on the page.
+std::string portal_complaint(const std::string &body) {
+  for (const html::Form &form : html::extract_forms(body)) {
+    for (const html::Field &field : form.fields) {
+      if (field.value.empty()) continue;
+      std::string name = util::lower(field.name);
+      bool looks_like_error = name.find("error") != std::string::npos ||
+                              name.find("errmsg") != std::string::npos ||
+                              name.find("message") != std::string::npos || name == "msg";
+      if (looks_like_error) return util::html_unescape(field.value);
+    }
+  }
+  return "";
+}
+
 std::string first_line(const std::string &s, std::size_t limit = 200) {
   std::string cleaned;
   for (char c : s) {
@@ -639,7 +656,13 @@ void judge(http::Client &client, const Config &cfg, const http::Response &resp, 
   out->success = false;
   out->next_portal = second_stage_portal(last, out->posted_to);
   out->message = explain_failed_verification(last, out->posted_to);
-  if (!resp.body.empty()) {
+
+  // Portals of this family re-render their form with the complaint in a hidden
+  // field. That message is the actual reason; the page title is not.
+  std::string complaint = portal_complaint(resp.body);
+  if (!complaint.empty()) {
+    out->message += ". The portal said: " + complaint;
+  } else if (!resp.body.empty()) {
     std::string t = html::title(resp.body);
     if (!t.empty()) out->message += " (portal page title: " + t + ")";
   }

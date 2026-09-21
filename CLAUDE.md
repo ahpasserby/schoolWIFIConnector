@@ -87,6 +87,10 @@ four separable steps, each independently testable:
    of the test coverage. Builds the submission from the form's *own* fields so
    hidden CSRF/session/IP values survive; config `username_field`/
    `password_field` override detection; `field.*` entries override or append.
+4. `judge()` — decides success. On failure it looks for the portal's own
+   complaint in the response: these families re-render their form with the
+   message sitting in a hidden `errormessage`-style field, and that text is the
+   actual reason where the page title is not.
 4. `judge()` — decides success. Prefers `success_contains`/`failure_contains`
    when configured, otherwise **re-probes** rather than trusting the portal's
    own "login successful" page.

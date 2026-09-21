@@ -414,7 +414,16 @@ class Portal(BaseHTTPRequestHandler):
                 return
             if flat.get("userName") != STAGE2_USERNAME or flat.get("userPwd") != STAGE2_PASSWORD:
                 self.log_message("REJECT stage2-credentials")
-                self._send(200, "<html><body>ERROR: bad credentials</body></html>")
+                # Re-render the form with the complaint in a hidden field, the
+                # way these portals actually report errors.
+                self._send(200, '<html><head><title>ISP</title></head><body>'
+                                '<form method="POST" action="/stage2/auth">'
+                                '<input type="hidden" name="errormessage" '
+                                'value="账号或密码错误，请重新输入">'
+                                '<input type="hidden" name="tok" value="s2-token">'
+                                '<input type="text" name="userName">'
+                                '<input type="password" name="userPwd">'
+                                '</form></body></html>')
                 return
             state["online"] = True
             self._send(200, "<html><body>Stage 2 login succeeded</body></html>")

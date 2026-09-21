@@ -381,9 +381,27 @@ grep -q "form the page submits itself" "$WORK/ts-login.log" \
 grep -qE "REJECT stage2-(baspushurl|testmacauth)" "$WORK/ts.log" \
   && bad "the auto-submitted form lost a hidden field" \
   || ok "stamps its own URL in and keeps the other hidden fields"
+
 grep -q "REJECT stage2-credentials" "$WORK/ts.log" \
   && bad "SCHOOLWIFI_PASSWORD leaked into the second stage" \
   || ok "SCHOOLWIFI_PASSWORD does not leak into the second stage"
+# A wrong password here is reported by re-rendering the form with the complaint
+# in a hidden field, which is the only place the real reason appears.
+curl -s -o /dev/null "http://127.0.0.1:$TS_PORT/logout" 2>/dev/null
+cat > "$WORK/ts2-bad.ini" <<INI
+[network]
+interface =
+[account]
+username = isp-user
+password = wrong-pass
+[portal]
+probe_urls = http://127.0.0.1:$TS_PORT/probe
+INI
+"$BIN" --config "$WORK/ts2-bad.ini" login >"$WORK/ts-bad.log" 2>&1
+grep -q "The portal said:" "$WORK/ts-bad.log" \
+  && ok "surfaces the portal's own complaint" || bad "surfaces the portal's own complaint"
+grep -q "账号或密码错误" "$WORK/ts-bad.log" \
+  && ok "and quotes it verbatim" || bad "and quotes it verbatim"
 
 kill "$PORTAL_PID" 2>/dev/null
 wait "$PORTAL_PID" 2>/dev/null

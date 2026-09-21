@@ -883,6 +883,8 @@ void test_chained_portal_diagnosis() {
         "an unattributable interception is not called a second stage");
 
   // The link died outright rather than a portal appearing.
+  // (portal_complaint is exercised through the e2e, which drives a portal that
+  //  re-renders its form with the message in a hidden field.)
   sw::portal::Probe gone;
   gone.state = sw::portal::State::Offline;
   msg = sw::portal::explain_failed_verification(gone, "https://w.bnbu.edu.cn/cgi-bin/srun_portal");
