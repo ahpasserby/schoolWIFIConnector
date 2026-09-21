@@ -61,14 +61,13 @@ grep -q "Portal       captive" <<<"$out" && ok "detects the captive state" \
   || bad "detects the captive state -- got: $(grep Portal <<<"$out")"
 
 # 2. diagnose walks the hops and finds the form.
-out="$("$BIN" --config "$CONFIG" diagnose 2>&1)"
+out="$(cd "$WORK" && "$BIN" --config "$CONFIG" diagnose 2>&1)"
 grep -q "meta refresh" <<<"$out" && ok "follows the meta-refresh hop" || bad "follows the meta-refresh hop"
 grep -q "username_field = userName" <<<"$out" && ok "identifies userName" || bad "identifies userName"
 grep -q "password_field = userPwd" <<<"$out" && ok "identifies userPwd" || bad "identifies userPwd"
 grep -q "csrfToken" <<<"$out" && ok "sees the hidden CSRF token" || bad "sees the hidden CSRF token"
 grep -q "\*\*\*\*\*\*\*\*" <<<"$out" && ok "masks the password in diagnostics" || bad "masks the password in diagnostics"
 grep -q "<password>" <<<"$out" && bad "leaks a password placeholder into the plan" || ok "no password value in the plan"
-rm -rf "$ROOT"/schoolwifi-diagnose-*
 
 # 3. login actually authenticates.
 if "$BIN" --config "$CONFIG" login >"$WORK/login.log" 2>&1; then
@@ -135,13 +134,14 @@ online_interval = 1
 captive_interval = 1
 INI
 
-out="$("$BIN" --config "$SRUN_CONFIG" diagnose 2>&1)"
+rm -rf "$WORK"/schoolwifi-diagnose-*
+out="$(cd "$WORK" && "$BIN" --config "$SRUN_CONFIG" diagnose 2>&1)"
 grep -q "javascript redirect" <<<"$out" && ok "follows the injected JS redirect" || bad "follows the injected JS redirect"
 grep -q "srun_portal_pc" <<<"$out" && ok "reaches the srun SPA" || bad "reaches the srun SPA"
 grep -q "(none found)" <<<"$out" && ok "correctly finds no HTML form" || bad "correctly finds no HTML form"
 
 # A portal with no form keeps its logic in JS, so diagnose must save that JS.
-dump=$(ls -d "$ROOT"/schoolwifi-diagnose-* 2>/dev/null | head -1)
+dump=$(ls -dt "$WORK"/schoolwifi-diagnose-* 2>/dev/null | head -1)
 if [[ -n "$dump" && -f "$dump/portal.html" ]]; then
   ok "diagnose saved the portal page"
 else
@@ -153,7 +153,6 @@ else
   bad "diagnose fetched the portal's same-origin script"
 fi
 grep -q "not same-origin" <<<"$out" && ok "skips third-party scripts" || bad "skips third-party scripts"
-rm -rf "$ROOT"/schoolwifi-diagnose-*
 
 if "$BIN" --config "$SRUN_CONFIG" login >"$WORK/srun-login.log" 2>&1; then
   ok "srun login succeeds"
@@ -232,16 +231,15 @@ grep -q "REJECT byod-init" "$WORK/byod.log" \
 
 # The captured init response must reach the diagnose dump: on a network nobody
 # can reach twice, it is the only record of what the portal actually answered.
-rm -rf "$ROOT"/schoolwifi-diagnose-*
 curl -s -o /dev/null "http://127.0.0.1:$BYOD_PORT/logout" 2>/dev/null
-"$BIN" --config "$BYOD_CONFIG" diagnose >"$WORK/byod-diag.log" 2>&1
-dump=$(ls -d "$ROOT"/schoolwifi-diagnose-* 2>/dev/null | head -1)
+rm -rf "$WORK"/schoolwifi-diagnose-*
+(cd "$WORK" && "$BIN" --config "$BYOD_CONFIG" diagnose) >"$WORK/byod-diag.log" 2>&1
+dump=$(ls -dt "$WORK"/schoolwifi-diagnose-* 2>/dev/null | head -1)
 if [[ -n "$dump" && -f "$dump/byod-init.json" ]] && grep -q '"url"' "$dump/byod-init.json"; then
   ok "diagnose captured the byod init response"
 else
   bad "diagnose captured the byod init response"
 fi
-rm -rf "$ROOT"/schoolwifi-diagnose-*
 
 kill "$PORTAL_PID" 2>/dev/null
 wait "$PORTAL_PID" 2>/dev/null

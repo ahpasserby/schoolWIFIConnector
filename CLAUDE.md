@@ -183,6 +183,11 @@ the starting point for adding support for a new portal family, the way
 
 ## Testing without a campus network
 
+`tests/e2e.sh` runs every `diagnose` from its own temp directory and only ever
+deletes dumps inside it. It must never touch `schoolwifi-diagnose-*` in the
+repository: a real capture from a network that cannot be reached again lives
+there, and a glob delete in the repo root already destroyed one.
+
 `tests/fake_portal.py` reproduces the full gateway behaviour — 302 → splash →
 meta-refresh → form with a CSRF token — and **rejects submissions that drop the
 hidden fields**, so the e2e test actually catches form-handling regressions.
