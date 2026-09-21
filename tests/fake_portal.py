@@ -116,11 +116,18 @@ class Portal(BaseHTTPRequestHandler):
             return
 
         if path == "/stage2/login":
-            self._send(200, '<html><head><title>ISP</title></head><body>'
-                            '<form method="POST" action="/stage2/auth">'
-                            '<input type="hidden" name="tok" value="s2-token">'
-                            '<input type="text" name="userName">'
-                            '<input type="password" name="userPwd">'
+            # Shaped like the real ISP portal: nothing to fill in, just a form
+            # the page posts to itself on load after stamping its own URL into
+            # a hidden field.
+            self._send(200, '<html><head><title>main</title></head>'
+                            '<script>function getBasInfo(){'
+                            'document.getElementById("basPushUrl").value='
+                            'window.parent.location.href;'
+                            'document.forms[0].submit();}</script>'
+                            '<body onload="getBasInfo()">'
+                            '<form action="/stage2/index.do" method="post">'
+                            '<input name="basPushUrl" id="basPushUrl" type="hidden">'
+                            '<input type="hidden" name="testmacauth" value="false">'
                             '</form></body></html>')
             return
 
@@ -380,6 +387,25 @@ class Portal(BaseHTTPRequestHandler):
 
         if path == "/byod/byodrs/login/defaultLogin":
             return  # handled below from the raw body
+
+        if path == "/stage2/index.do":
+            # The bootstrap must have stamped its own URL in, and kept the
+            # other hidden field, before this page will show a login form.
+            if not flat.get("basPushUrl", "").startswith("http"):
+                self.log_message("REJECT stage2-baspushurl")
+                self._send(200, "<html><body>ERROR: basPushUrl missing</body></html>")
+                return
+            if flat.get("testmacauth") != "false":
+                self.log_message("REJECT stage2-testmacauth")
+                self._send(200, "<html><body>ERROR: testmacauth missing</body></html>")
+                return
+            self._send(200, '<html><head><title>ISP login</title></head><body>'
+                            '<form method="POST" action="/stage2/auth">'
+                            '<input type="hidden" name="tok" value="s2-token">'
+                            '<input type="text" name="userName">'
+                            '<input type="password" name="userPwd">'
+                            '</form></body></html>')
+            return
 
         if path == "/stage2/auth":
             if flat.get("tok") != "s2-token":

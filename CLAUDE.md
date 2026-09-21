@@ -75,7 +75,11 @@ four separable steps, each independently testable:
    transparent proxy swapped the page, which is also captive.
 2. `resolve_login_page()` — walks up to `kMaxHops` from the intercept point,
    and fetches the final URL if the budget runs out mid-chain, so a page that
-   was reached but never loaded can still be inspected.
+   was reached but never loaded can still be inspected. A form whose fields are
+   all hidden on a page that submits itself on load is a **redirect performed
+   by POST** — several ISP portals bounce through one — so it is followed,
+   with empty `*url*` fields stamped with the current page address the way the
+   page's own script does.
    following `<meta refresh>`, then JS (`location.href=`, `top.self.location`),
    then `<iframe src>`, stopping at the first page containing a `type=password`
    input. Real portals take 2–3 hops. Loop-guarded.

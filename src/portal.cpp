@@ -383,6 +383,70 @@ LoginPage resolve_login_page(http::Client &client, const Config &cfg, const Prob
       next = html::iframe_src(html);
       kind = "iframe";
     }
+    // A form whose fields are all hidden, submitted by the page itself on
+    // load, is a redirect performed by POST. Follow it as a browser would.
+    if (next.empty() && html::submits_on_load(html)) {
+      // Named, not a temporary: a pointer into the vector returned by
+      // extract_forms() dangles the moment the range-for ends.
+      std::vector<html::Form> forms = html::extract_forms(html);
+      const html::Form *machine_form = nullptr;
+      for (const html::Form &f : forms) {
+        if (f.fields.empty()) continue;
+        bool all_hidden = true;
+        for (const html::Field &field : f.fields) {
+          if (!util::iequals(field.type, "hidden")) all_hidden = false;
+        }
+        if (all_hidden) {
+          machine_form = &f;
+          break;
+        }
+      }
+
+      if (machine_form != nullptr) {
+        std::string action =
+            machine_form->action.empty() ? url : util::resolve_url(url, machine_form->action);
+        bool already_been = false;
+        for (const std::string &been : visited) {
+          if (been == util::url_without_query(action)) already_been = true;
+        }
+
+        if (!already_been) {
+          util::Pairs fields;
+          for (const html::Field &f : machine_form->fields) {
+            std::string value = f.value;
+            // The script fills these from location.href before submitting;
+            // with no frame in play that is this page's own address.
+            if (value.empty() && util::icontains(f.name, "url")) value = url;
+            fields.emplace_back(f.name, value);
+          }
+
+          std::string encoded = util::form_encode(fields);
+          http::Request req;
+          req.method = util::iequals(machine_form->method, "get") ? "GET" : "POST";
+          req.referer = url;
+          req.follow = true;
+          req.timeout_sec = 12;
+          if (req.method == "GET") {
+            req.url = action + (action.find('?') == std::string::npos ? "?" : "&") + encoded;
+          } else {
+            req.url = action;
+            req.body = encoded;
+          }
+
+          log::info("portal hop (form the page submits itself): " + req.method + " " + action);
+          page.trail.push_back("auto-submitted form: " + req.method + " " + action);
+
+          http::Response resp = fetch(client, cfg, req);
+          if (resp.ok) {
+            url = resp.final_url.empty() ? action : resp.final_url;
+            html = resp.body;
+            continue;
+          }
+          page.note = "auto-submitted form failed: " + resp.error;
+        }
+      }
+    }
+
     if (next.empty() && !byod_tried && byod::looks_like_byod(url, html)) {
       byod_tried = true;
       // A BYOD shell page hides its next hop behind an API call rather than a

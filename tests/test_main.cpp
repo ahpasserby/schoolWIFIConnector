@@ -179,6 +179,32 @@ void test_redirect_hints() {
   check_eq(sw::html::iframe_src(R"(<frameset><frame src="/login.asp"></frameset>)"), "/login.asp",
            "a plain <frame> counts too");
 
+  section("html::submits_on_load");
+  // The ISP bootstrap: nothing to fill in, the page posts the form itself.
+  const std::string bootstrap =
+      R"(<html><head><title>main</title></head>)"
+      R"(<script>function getBasInfo(){document.getElementById("basPushUrl").value=)"
+      R"(window.parent.location.href;document.forms[0].submit();}</script>)"
+      R"HTML(<body onload="getBasInfo()"><form action="/index.do" method="post">)HTML"
+      R"(<input name="basPushUrl" id="basPushUrl" type="hidden">)"
+      R"(<input type="hidden" name="testmacauth" value="false"></form></body></html>)";
+  check(sw::html::submits_on_load(bootstrap), "a self-submitting page is recognised");
+  check(!sw::html::submits_on_load(
+            R"(<html><body><form><input name=u><input type=password name=p></form></body></html>)"),
+        "an ordinary login form is not auto-submitted");
+  check(!sw::html::submits_on_load(
+            R"HTML(<html><body onload="init()">no form here</body></html>)HTML"),
+        "onload without a submit call is not enough");
+
+  // Its fields are all hidden, so it can never be planned as a login form --
+  // which is exactly why following it has to happen during discovery.
+  sw::portal::LoginPage boot_page;
+  boot_page.url = "http://portal.example.com/?wlanuserip=10.0.0.1";
+  boot_page.html = bootstrap;
+  sw::Config boot_cfg;
+  check(!sw::portal::plan_form_login(boot_cfg, boot_page, "u", "p").ok,
+        "the bootstrap form is not mistaken for a login form");
+
   section("html::script_srcs");
   // Shaped like the real BYOD portal: an empty body and a chain of scripts.
   const std::string byod = R"(<!doctype html><html><head><title>BYOD</title></head>

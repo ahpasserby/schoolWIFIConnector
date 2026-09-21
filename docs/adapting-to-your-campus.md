@@ -161,6 +161,28 @@ post_body = user_account={username|url}&user_password={password|url}&wlan_user_i
 > 注意：如果这个 API 的参数里有 JS 现算的哈希/加密串，`raw` 模式重放固定值是不行的。
 > 欢迎提 issue 带上（脱敏后的）请求样本。
 
+### 4c. 页面只有隐藏字段、加载就自动提交
+
+```
+== forms ==
+  form #0  action=http://portal.example.com:80/index.do method=post
+      basPushUrl               type=hidden     value=
+      testmacauth              type=hidden     value=false
+```
+
+配合页面里的 `<body onload="...">` + `document.forms[0].submit()`，
+这不是登录页，而是**用 POST 做的一次跳转**——提交之后返回的才是真正的登录页。
+运营商门户（如广东联通 `portal.gd165.com`）常用这种写法。
+
+**已内置支持**，日志里会看到：
+
+```
+INFO  portal hop (form the page submits itself): POST http://portal.example.com:80/index.do
+```
+
+名字里含 `url` 且值为空的隐藏字段会被填上当前页面地址，
+和页面自己的脚本（`value = window.parent.location.href`）做的事一致。
+
 ### 5. 登录了但判定成失败
 
 默认的成功判定是「重新探测一次，网络真通了才算成功」，通常最可靠。

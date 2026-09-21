@@ -375,6 +375,12 @@ grep -q "stage 1 done" "$WORK/ts-login.log" \
   || bad "reports the first stage as done rather than failed"
 grep -q "as isp-user" "$WORK/ts-login.log" \
   && ok "the second stage uses its own account" || bad "the second stage uses its own account"
+grep -q "form the page submits itself" "$WORK/ts-login.log" \
+  && ok "follows the form the ISP page submits on load" \
+  || bad "follows the form the ISP page submits on load"
+grep -qE "REJECT stage2-(baspushurl|testmacauth)" "$WORK/ts.log" \
+  && bad "the auto-submitted form lost a hidden field" \
+  || ok "stamps its own URL in and keeps the other hidden fields"
 grep -q "REJECT stage2-credentials" "$WORK/ts.log" \
   && bad "SCHOOLWIFI_PASSWORD leaked into the second stage" \
   || ok "SCHOOLWIFI_PASSWORD does not leak into the second stage"

@@ -37,6 +37,11 @@ std::string iframe_src(const std::string &html);
 // logic lives entirely in JavaScript leaves nothing else to go on.
 std::vector<std::string> script_srcs(const std::string &html);
 
+// True when the page submits a form as soon as it loads. Combined with a form
+// whose fields are all hidden, that is a redirect performed by POST -- several
+// ISP portals bounce through one before showing anything a person can fill in.
+bool submits_on_load(const std::string &html);
+
 std::string title(const std::string &html);
 std::string tag_attr(const std::string &tag, const std::string &attr);
 

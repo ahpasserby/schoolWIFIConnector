@@ -275,6 +275,12 @@ std::vector<std::string> script_srcs(const std::string &html) {
   return out;
 }
 
+bool submits_on_load(const std::string &html) {
+  bool submits = util::icontains(html, ".submit()");
+  bool on_load = util::icontains(html, "onload");
+  return submits && on_load;
+}
+
 std::string title(const std::string &html) {
   std::size_t p = find_tag(html, "title", 0);
   if (p == std::string::npos) return "";
