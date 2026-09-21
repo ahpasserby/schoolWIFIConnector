@@ -1,0 +1,14 @@
+build/
+*.o
+*.dSYM/
+
+# Diagnostics dumped by `schoolwifi diagnose` -- these contain the portal's
+# raw HTML and must never be committed.
+schoolwifi-portal-*.html
+
+# Local configuration may contain a username (and, if the Keychain is not
+# used, a password).
+config/config.ini
+*.local.ini
+
+.DS_Store

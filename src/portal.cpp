@@ -1,0 +1,479 @@
+#include "sw/portal.hpp"
+
+#include <chrono>
+#include <string>
+#include <thread>
+
+#include "sw/html.hpp"
+#include "sw/log.hpp"
+#include "sw/util.hpp"
+
+namespace sw::portal {
+namespace {
+
+constexpr int kMaxHops = 6;
+constexpr int kVerifyAttempts = 4;
+constexpr int kVerifyDelayMs = 1200;
+
+const char *kMaskedPassword = "********";
+
+void sleep_ms(int ms) { std::this_thread::sleep_for(std::chrono::milliseconds(ms)); }
+
+// What a given connectivity-check endpoint returns when nothing intercepts it.
+struct Expectation {
+  long status;
+  const char *marker;  // substring that must appear in the body ("" = any)
+};
+
+Expectation expectation_for(const std::string &url) {
+  if (util::icontains(url, "generate_204") || util::icontains(url, "gen_204")) return {204, ""};
+  if (util::icontains(url, "msftconnecttest")) return {200, "Microsoft Connect Test"};
+  if (util::icontains(url, "captive.apple.com") || util::icontains(url, "hotspot-detect")) {
+    return {200, "Success"};
+  }
+  return {200, ""};
+}
+
+// Names campus portals use for the account field, most specific first.
+const char *kUsernameHints[] = {
+    "username", "user_name", "loginname", "login_name", "userid", "user_id", "account",
+    "stuid",    "studentid", "ddddd",     "uname",      "user",   "login",   "email",
+    "phone",    "mobile",    "name",      "id",
+};
+
+const char *kPasswordHints[] = {
+    "password", "passwd", "upass", "userpass", "pwd", "pass", "pw", "secret",
+};
+
+// Picks the field best matching a hint list. Hints are consulted in priority
+// order (not field order) so "username" beats a field that merely happens to
+// contain a weaker hint.
+std::string pick_field(const std::vector<html::Field> &fields, const char *const *hints,
+                       std::size_t count, const std::string &exclude) {
+  for (std::size_t h = 0; h < count; ++h) {
+    for (const html::Field &f : fields) {
+      if (f.name == exclude) continue;
+      if (util::iequals(f.name, hints[h])) return f.name;
+    }
+  }
+
+  // Substring fallback, restricted to hints long enough to be meaningful:
+  // "id" would otherwise claim a field named "validcode", and "pw" would
+  // claim "pwdTip".
+  for (std::size_t h = 0; h < count; ++h) {
+    if (std::char_traits<char>::length(hints[h]) < 4) continue;
+    for (const html::Field &f : fields) {
+      if (f.name == exclude) continue;
+      if (util::icontains(f.name, hints[h])) return f.name;
+    }
+  }
+  return "";
+}
+
+template <std::size_t N>
+std::string pick_field(const std::vector<html::Field> &fields, const char *const (&hints)[N],
+                       const std::string &exclude = "") {
+  return pick_field(fields, hints, N, exclude);
+}
+
+std::string first_line(const std::string &s, std::size_t limit = 200) {
+  std::string cleaned;
+  for (char c : s) {
+    if (c == '\n' || c == '\r' || c == '\t') {
+      if (!cleaned.empty() && cleaned.back() != ' ') cleaned += ' ';
+    } else {
+      cleaned += c;
+    }
+    if (cleaned.size() >= limit) break;
+  }
+  return util::trim(cleaned);
+}
+
+} // namespace
+
+const char *state_name(State s) {
+  switch (s) {
+    case State::Online: return "online";
+    case State::Captive: return "captive";
+    case State::Offline: return "offline";
+  }
+  return "unknown";
+}
+
+Probe probe(http::Client &client, const Config &cfg) {
+  Probe last;
+  for (const std::string &url : effective_probe_urls(cfg)) {
+    Probe pr;
+    pr.probe_url = url;
+
+    // follow = false: the redirect the portal injects IS the information we want.
+    http::Response resp = client.get(url, /*follow=*/false, /*timeout_sec=*/6);
+    pr.status = resp.status;
+    pr.body = resp.body;
+    pr.redirects = resp.redirects;
+
+    if (!resp.ok) {
+      pr.state = State::Offline;
+      pr.error = resp.error;
+      last = pr;
+      continue;  // try the next endpoint before declaring the link dead
+    }
+
+    pr.location = resp.header("location");
+    Expectation exp = expectation_for(url);
+
+    if (resp.status >= 300 && resp.status < 400 && !pr.location.empty()) {
+      pr.state = State::Captive;
+    } else if (resp.status == exp.status &&
+               (exp.marker[0] == '\0' || util::icontains(resp.body, exp.marker))) {
+      pr.state = State::Online;
+    } else {
+      // A 200 that is not the expected payload means a transparent proxy
+      // swapped the response for a splash page.
+      pr.state = State::Captive;
+    }
+
+    log::debug(std::string("probe ") + url + " -> " + state_name(pr.state) + " (status " +
+               std::to_string(pr.status) + ")");
+    return pr;
+  }
+  return last;
+}
+
+LoginPage resolve_login_page(http::Client &client, const Config &cfg, const Probe &pr) {
+  LoginPage page;
+
+  // An explicit login_url short-circuits discovery entirely.
+  if (!cfg.login_url.empty()) {
+    page.url = cfg.login_url;
+    page.trail.push_back("config login_url: " + cfg.login_url);
+    http::Response resp = client.get(cfg.login_url, /*follow=*/true, 10);
+    page.url = resp.final_url.empty() ? cfg.login_url : resp.final_url;
+    page.html = resp.body;
+    if (!resp.ok) page.note = "fetch failed: " + resp.error;
+    return page;
+  }
+
+  std::string url;
+  std::string html;
+
+  if (!pr.location.empty()) {
+    url = util::resolve_url(pr.probe_url, pr.location);
+    page.trail.push_back("redirect: " + url);
+  } else {
+    url = pr.probe_url;
+    html = pr.body;  // the intercepted body is already the splash page
+    page.trail.push_back("intercepted body from " + url);
+  }
+
+  std::vector<std::string> seen;
+  for (int hop = 0; hop < kMaxHops; ++hop) {
+    if (html.empty()) {
+      http::Response resp = client.get(url, /*follow=*/true, 10);
+      if (!resp.ok) {
+        page.note = "fetch failed: " + resp.error;
+        break;
+      }
+      if (!resp.final_url.empty() && resp.final_url != url) {
+        url = resp.final_url;
+        page.trail.push_back("followed to: " + url);
+      }
+      html = resp.body;
+    }
+
+    for (const html::Form &f : html::extract_forms(html)) {
+      if (f.has_password()) {
+        page.url = url;
+        page.html = html;
+        page.trail.push_back("login form found at: " + url);
+        return page;
+      }
+    }
+
+    // No password field here: look for the next hop the browser would take.
+    std::string next = html::meta_refresh_url(html);
+    std::string kind = "meta refresh";
+    if (next.empty()) {
+      next = html::js_redirect_url(html);
+      kind = "javascript redirect";
+    }
+    if (next.empty()) {
+      next = html::iframe_src(html);
+      kind = "iframe";
+    }
+    if (next.empty()) break;
+
+    std::string resolved = util::resolve_url(url, next);
+    bool loop = resolved == url;
+    for (const std::string &s : seen) {
+      if (s == resolved) loop = true;
+    }
+    if (loop) {
+      page.note = "redirect loop at " + resolved;
+      break;
+    }
+
+    seen.push_back(url);
+    page.trail.push_back(kind + ": " + resolved);
+    url = resolved;
+    html.clear();
+  }
+
+  page.url = url;
+  page.html = html;
+  return page;
+}
+
+FormPlan plan_form_login(const Config &cfg, const LoginPage &page, const std::string &username,
+                         const std::string &password) {
+  FormPlan plan;
+
+  std::vector<html::Form> forms = html::extract_forms(page.html);
+  if (forms.empty()) {
+    plan.reason = "no <form> and no <input> fields on " + page.url;
+    return plan;
+  }
+
+  const html::Form *chosen = nullptr;
+  for (const html::Form &f : forms) {
+    if (f.has_password()) {
+      chosen = &f;
+      break;
+    }
+  }
+  if (!chosen) {
+    // Fall back to the largest form; some portals mark the password input as
+    // type="text" and hide it with CSS.
+    const html::Form *biggest = &forms[0];
+    for (const html::Form &f : forms) {
+      if (f.fields.size() > biggest->fields.size()) biggest = &f;
+    }
+    chosen = biggest;
+  }
+
+  for (const html::Field &f : chosen->fields) {
+    if (!cfg.password_field.empty()) {
+      if (util::iequals(f.name, cfg.password_field)) plan.password_field = f.name;
+    } else if (util::iequals(f.type, "password") && plan.password_field.empty()) {
+      plan.password_field = f.name;
+    }
+
+    if (!cfg.username_field.empty()) {
+      if (util::iequals(f.name, cfg.username_field)) plan.username_field = f.name;
+    }
+  }
+
+  if (plan.password_field.empty()) {
+    plan.password_field = pick_field(chosen->fields, kPasswordHints);
+  }
+
+  if (plan.username_field.empty()) {
+    plan.username_field = pick_field(chosen->fields, kUsernameHints, plan.password_field);
+  }
+  if (plan.username_field.empty()) {
+    // Last resort: the first visible text-ish input that is not the password.
+    for (const html::Field &f : chosen->fields) {
+      if (f.name == plan.password_field) continue;
+      if (f.type.empty() || f.type == "text" || f.type == "email" || f.type == "tel") {
+        plan.username_field = f.name;
+        break;
+      }
+    }
+  }
+
+  if (plan.username_field.empty() || plan.password_field.empty()) {
+    plan.reason = "could not identify the username/password inputs (found " +
+                  std::to_string(chosen->fields.size()) +
+                  " fields); set username_field / password_field in the config";
+    return plan;
+  }
+
+  // Start from the form's own values so hidden CSRF/session tokens survive.
+  for (const html::Field &f : chosen->fields) {
+    std::string value = f.value;
+    if (f.name == plan.username_field) value = username;
+    if (f.name == plan.password_field) value = password;
+    plan.fields.emplace_back(f.name, value);
+  }
+
+  for (const auto &kv : cfg.extra_fields) {
+    bool replaced = false;
+    for (auto &field : plan.fields) {
+      if (field.first == kv.first) {
+        field.second = kv.second;
+        replaced = true;
+      }
+    }
+    if (!replaced) plan.fields.emplace_back(kv.first, kv.second);
+  }
+
+  plan.action_url =
+      chosen->action.empty() ? page.url : util::resolve_url(page.url, chosen->action);
+  plan.method = util::iequals(chosen->method, "get") ? "GET" : "POST";
+  plan.ok = true;
+  return plan;
+}
+
+namespace {
+
+// Decides whether a submission worked, preferring the config's explicit
+// markers and otherwise re-probing until connectivity actually appears.
+void judge(http::Client &client, const Config &cfg, const http::Response &resp, LoginResult *out) {
+  out->status = resp.status;
+  out->response_body = resp.body;
+
+  if (!cfg.failure_contains.empty() && util::icontains(resp.body, cfg.failure_contains)) {
+    out->success = false;
+    out->message = "portal reported failure: " + first_line(resp.body);
+    return;
+  }
+  if (!cfg.success_contains.empty() && util::icontains(resp.body, cfg.success_contains)) {
+    out->success = true;
+    out->message = "portal reported success";
+    return;
+  }
+
+  for (int attempt = 1; attempt <= kVerifyAttempts; ++attempt) {
+    sleep_ms(kVerifyDelayMs);
+    Probe check = probe(client, cfg);
+    if (check.state == State::Online) {
+      out->success = true;
+      out->message = "verified online";
+      return;
+    }
+    log::debug("verify attempt " + std::to_string(attempt) + ": still " + state_name(check.state));
+  }
+
+  out->success = false;
+  out->message = "submitted, but connectivity never came up";
+  if (!resp.body.empty()) {
+    std::string t = html::title(resp.body);
+    if (!t.empty()) out->message += " (portal page title: " + t + ")";
+  }
+}
+
+} // namespace
+
+LoginResult login(http::Client &client, const Config &cfg, const std::string &password) {
+  LoginResult result;
+
+  Probe pr = probe(client, cfg);
+  if (pr.state == State::Online) {
+    result.success = true;
+    result.message = "already online, nothing to do";
+    return result;
+  }
+  if (pr.state == State::Offline) {
+    result.success = false;
+    result.message = "no network path at all" + (pr.error.empty() ? "" : " (" + pr.error + ")");
+    return result;
+  }
+
+  std::map<std::string, std::string> vars = {
+      {"username", cfg.username},
+      {"password", password},
+  };
+
+  if (cfg.login_method == "raw") {
+    if (cfg.login_url.empty()) {
+      result.message = "login_method = raw requires login_url in the config";
+      return result;
+    }
+    http::Request req;
+    req.url = util::expand_vars(cfg.login_url, vars);
+    req.method = util::iequals(cfg.http_method, "GET") ? "GET" : "POST";
+    req.body = util::expand_vars(cfg.post_body, vars);
+    req.follow = true;
+    req.timeout_sec = 12;
+
+    result.posted_to = req.url;
+    result.method = req.method;
+    result.sent_fields.emplace_back("(raw body)",
+                                    util::expand_vars(cfg.post_body,
+                                                      {{"username", cfg.username},
+                                                       {"password", kMaskedPassword}}));
+
+    http::Response resp = client.send(req);
+    if (!resp.ok) {
+      result.message = "request failed: " + resp.error;
+      return result;
+    }
+    judge(client, cfg, resp, &result);
+    return result;
+  }
+
+  LoginPage page = resolve_login_page(client, cfg, pr);
+  if (page.html.empty()) {
+    result.message = "could not load the portal page";
+    if (!page.note.empty()) result.message += ": " + page.note;
+    return result;
+  }
+
+  FormPlan plan = plan_form_login(cfg, page, cfg.username, password);
+  if (!plan.ok) {
+    result.message = plan.reason;
+    return result;
+  }
+
+  std::string encoded = util::form_encode(plan.fields);
+  result.posted_to = plan.action_url;
+  result.method = plan.method;
+  for (const auto &kv : plan.fields) {
+    result.sent_fields.emplace_back(kv.first,
+                                    kv.first == plan.password_field ? kMaskedPassword : kv.second);
+  }
+
+  http::Request req;
+  req.method = plan.method;
+  req.referer = page.url;
+  req.follow = true;
+  req.timeout_sec = 12;
+  if (plan.method == "GET") {
+    req.url = plan.action_url + (plan.action_url.find('?') == std::string::npos ? "?" : "&") + encoded;
+  } else {
+    req.url = plan.action_url;
+    req.body = encoded;
+  }
+
+  log::info("submitting login to " + plan.action_url + " as " + cfg.username);
+  http::Response resp = client.send(req);
+  if (!resp.ok) {
+    result.message = "submit failed: " + resp.error;
+    return result;
+  }
+
+  judge(client, cfg, resp, &result);
+  return result;
+}
+
+LoginResult logout(http::Client &client, const Config &cfg) {
+  LoginResult result;
+  if (cfg.logout_url.empty()) {
+    result.message = "no logout_url configured";
+    return result;
+  }
+
+  std::map<std::string, std::string> vars = {{"username", cfg.username}};
+  http::Request req;
+  req.url = util::expand_vars(cfg.logout_url, vars);
+  req.method = "GET";
+  req.follow = true;
+  req.timeout_sec = 10;
+
+  result.posted_to = req.url;
+  result.method = req.method;
+
+  http::Response resp = client.send(req);
+  if (!resp.ok) {
+    result.message = "request failed: " + resp.error;
+    return result;
+  }
+
+  result.status = resp.status;
+  result.response_body = resp.body;
+  result.success = resp.status >= 200 && resp.status < 400;
+  result.message = result.success ? "logout request sent" : "portal returned " + std::to_string(resp.status);
+  return result;
+}
+
+} // namespace sw::portal

@@ -1,0 +1,336 @@
+#include "sw/util.hpp"
+
+#include <termios.h>
+#include <unistd.h>
+
+#include <sys/stat.h>
+#include <sys/types.h>
+
+#include <algorithm>
+#include <cctype>
+#include <cerrno>
+#include <cstdio>
+#include <cstdlib>
+#include <ctime>
+#include <fstream>
+#include <iostream>
+#include <sstream>
+
+namespace sw::util {
+namespace {
+
+int hex_val(char c) {
+  if (c >= '0' && c <= '9') return c - '0';
+  if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+  if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+  return -1;
+}
+
+char lower_c(char c) { return static_cast<char>(std::tolower(static_cast<unsigned char>(c))); }
+
+} // namespace
+
+std::string trim(const std::string &s) {
+  std::size_t b = 0;
+  std::size_t e = s.size();
+  while (b < e && std::isspace(static_cast<unsigned char>(s[b]))) ++b;
+  while (e > b && std::isspace(static_cast<unsigned char>(s[e - 1]))) --e;
+  return s.substr(b, e - b);
+}
+
+std::string lower(std::string s) {
+  std::transform(s.begin(), s.end(), s.begin(), lower_c);
+  return s;
+}
+
+bool iequals(const std::string &a, const std::string &b) {
+  if (a.size() != b.size()) return false;
+  for (std::size_t i = 0; i < a.size(); ++i) {
+    if (lower_c(a[i]) != lower_c(b[i])) return false;
+  }
+  return true;
+}
+
+std::size_t ifind(const std::string &hay, const std::string &needle, std::size_t pos) {
+  if (needle.empty()) return pos <= hay.size() ? pos : std::string::npos;
+  if (needle.size() > hay.size()) return std::string::npos;
+  for (std::size_t i = pos; i + needle.size() <= hay.size(); ++i) {
+    std::size_t j = 0;
+    while (j < needle.size() && lower_c(hay[i + j]) == lower_c(needle[j])) ++j;
+    if (j == needle.size()) return i;
+  }
+  return std::string::npos;
+}
+
+bool icontains(const std::string &hay, const std::string &needle) {
+  return ifind(hay, needle) != std::string::npos;
+}
+
+bool starts_with(const std::string &s, const std::string &prefix) {
+  return s.size() >= prefix.size() && s.compare(0, prefix.size(), prefix) == 0;
+}
+
+std::vector<std::string> split(const std::string &s, char sep) {
+  std::vector<std::string> out;
+  std::string cur;
+  std::istringstream is(s);
+  while (std::getline(is, cur, sep)) out.push_back(cur);
+  return out;
+}
+
+std::string join(const std::vector<std::string> &parts, const std::string &sep) {
+  std::string out;
+  for (std::size_t i = 0; i < parts.size(); ++i) {
+    if (i) out += sep;
+    out += parts[i];
+  }
+  return out;
+}
+
+std::string url_encode(const std::string &s) {
+  static const char *hex = "0123456789ABCDEF";
+  std::string out;
+  out.reserve(s.size() * 3);
+  for (unsigned char c : s) {
+    if (std::isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
+      out += static_cast<char>(c);
+    } else {
+      out += '%';
+      out += hex[c >> 4];
+      out += hex[c & 0x0F];
+    }
+  }
+  return out;
+}
+
+std::string url_decode(const std::string &s) {
+  std::string out;
+  out.reserve(s.size());
+  for (std::size_t i = 0; i < s.size(); ++i) {
+    if (s[i] == '+') {
+      out += ' ';
+    } else if (s[i] == '%' && i + 2 < s.size()) {
+      int hi = hex_val(s[i + 1]);
+      int lo = hex_val(s[i + 2]);
+      if (hi >= 0 && lo >= 0) {
+        out += static_cast<char>(hi * 16 + lo);
+        i += 2;
+      } else {
+        out += s[i];
+      }
+    } else {
+      out += s[i];
+    }
+  }
+  return out;
+}
+
+std::string html_unescape(const std::string &s) {
+  struct Entity {
+    const char *name;
+    const char *repl;
+  };
+  static const Entity kEntities[] = {
+      {"&amp;", "&"},  {"&lt;", "<"},   {"&gt;", ">"},
+      {"&quot;", "\""}, {"&#39;", "'"}, {"&apos;", "'"},
+      {"&nbsp;", " "},
+  };
+  std::string out;
+  out.reserve(s.size());
+  for (std::size_t i = 0; i < s.size();) {
+    if (s[i] == '&') {
+      bool matched = false;
+      for (const Entity &e : kEntities) {
+        std::size_t len = std::char_traits<char>::length(e.name);
+        if (s.compare(i, len, e.name) == 0) {
+          out += e.repl;
+          i += len;
+          matched = true;
+          break;
+        }
+      }
+      if (matched) continue;
+    }
+    out += s[i++];
+  }
+  return out;
+}
+
+std::string url_origin(const std::string &url) {
+  std::size_t scheme = url.find("://");
+  if (scheme == std::string::npos) return "";
+  std::size_t slash = url.find('/', scheme + 3);
+  return slash == std::string::npos ? url : url.substr(0, slash);
+}
+
+std::string resolve_url(const std::string &base, const std::string &ref) {
+  std::string r = trim(ref);
+  if (r.empty()) return base;
+  if (r.find("://") != std::string::npos) return r;
+  if (starts_with(r, "//")) {
+    std::size_t scheme = base.find("://");
+    std::string proto = scheme == std::string::npos ? "http:" : base.substr(0, scheme + 1);
+    return proto + r;
+  }
+  std::string origin = url_origin(base);
+  if (origin.empty()) return r;
+  if (r[0] == '/') return origin + r;
+  if (r[0] == '?' || r[0] == '#') {
+    std::size_t cut = base.find_first_of("?#");
+    return (cut == std::string::npos ? base : base.substr(0, cut)) + r;
+  }
+  // Relative to the base's directory.
+  std::string path = base.substr(origin.size());
+  std::size_t cut = path.find_first_of("?#");
+  if (cut != std::string::npos) path = path.substr(0, cut);
+  std::size_t slash = path.rfind('/');
+  path = slash == std::string::npos ? "/" : path.substr(0, slash + 1);
+  if (path.empty() || path[0] != '/') path = "/" + path;
+  return origin + path + r;
+}
+
+std::string form_encode(const Pairs &pairs) {
+  std::string out;
+  for (const auto &kv : pairs) {
+    if (!out.empty()) out += '&';
+    out += url_encode(kv.first);
+    out += '=';
+    out += url_encode(kv.second);
+  }
+  return out;
+}
+
+std::string expand_vars(const std::string &tmpl, const std::map<std::string, std::string> &vars) {
+  std::string out;
+  for (std::size_t i = 0; i < tmpl.size();) {
+    if (tmpl[i] != '{') {
+      out += tmpl[i++];
+      continue;
+    }
+    std::size_t close = tmpl.find('}', i);
+    if (close == std::string::npos) {
+      out += tmpl.substr(i);
+      break;
+    }
+    std::string token = tmpl.substr(i + 1, close - i - 1);
+    bool encode = false;
+    std::size_t pipe = token.find('|');
+    if (pipe != std::string::npos) {
+      encode = iequals(trim(token.substr(pipe + 1)), "url");
+      token = trim(token.substr(0, pipe));
+    }
+    auto it = vars.find(token);
+    if (it == vars.end()) {
+      out += tmpl.substr(i, close - i + 1);  // leave unknown placeholders alone
+    } else {
+      out += encode ? url_encode(it->second) : it->second;
+    }
+    i = close + 1;
+  }
+  return out;
+}
+
+std::string home_dir() {
+  const char *h = std::getenv("HOME");
+  return h ? std::string(h) : std::string();
+}
+
+std::string expand_tilde(const std::string &path) {
+  if (path.empty() || path[0] != '~') return path;
+  if (path.size() == 1) return home_dir();
+  if (path[1] == '/') return home_dir() + path.substr(1);
+  return path;
+}
+
+std::string dirname(const std::string &path) {
+  std::size_t slash = path.rfind('/');
+  if (slash == std::string::npos) return ".";
+  if (slash == 0) return "/";
+  return path.substr(0, slash);
+}
+
+bool mkdir_p(const std::string &path) {
+  if (path.empty() || path == "/" || path == ".") return true;
+  struct stat st {};
+  if (stat(path.c_str(), &st) == 0) return S_ISDIR(st.st_mode);
+  if (!mkdir_p(dirname(path))) return false;
+  return ::mkdir(path.c_str(), 0700) == 0 || errno == EEXIST;
+}
+
+bool file_exists(const std::string &path) {
+  struct stat st {};
+  return stat(path.c_str(), &st) == 0;
+}
+
+bool write_file(const std::string &path, const std::string &data) {
+  if (!mkdir_p(dirname(path))) return false;
+  std::ofstream os(path, std::ios::binary | std::ios::trunc);
+  if (!os) return false;
+  os.write(data.data(), static_cast<std::streamsize>(data.size()));
+  return os.good();
+}
+
+std::string read_file(const std::string &path) {
+  std::ifstream is(path, std::ios::binary);
+  if (!is) return "";
+  std::ostringstream ss;
+  ss << is.rdbuf();
+  return ss.str();
+}
+
+namespace {
+std::string format_time(const char *fmt) {
+  std::time_t t = std::time(nullptr);
+  std::tm tm {};
+  localtime_r(&t, &tm);
+  char buf[64];
+  std::strftime(buf, sizeof(buf), fmt, &tm);
+  return buf;
+}
+} // namespace
+
+std::string now_iso() { return format_time("%Y-%m-%d %H:%M:%S"); }
+std::string now_compact() { return format_time("%Y%m%d-%H%M%S"); }
+
+std::string exec_capture(const std::string &cmd) {
+  FILE *pipe = ::popen(cmd.c_str(), "r");
+  if (!pipe) return "";
+  std::string out;
+  char buf[4096];
+  while (std::fgets(buf, sizeof(buf), pipe)) out += buf;
+  ::pclose(pipe);
+  return out;
+}
+
+std::string read_line(const std::string &prompt, const std::string &fallback) {
+  std::fputs(prompt.c_str(), stdout);
+  std::fflush(stdout);
+  std::string line;
+  if (!std::getline(std::cin, line)) return fallback;
+  line = trim(line);
+  return line.empty() ? fallback : line;
+}
+
+std::string read_password(const std::string &prompt) {
+  std::fputs(prompt.c_str(), stdout);
+  std::fflush(stdout);
+
+  termios old {};
+  bool tty = ::tcgetattr(STDIN_FILENO, &old) == 0;
+  if (tty) {
+    termios quiet = old;
+    quiet.c_lflag &= ~static_cast<tcflag_t>(ECHO);
+    ::tcsetattr(STDIN_FILENO, TCSAFLUSH, &quiet);
+  }
+
+  std::string line;
+  std::getline(std::cin, line);
+
+  if (tty) {
+    ::tcsetattr(STDIN_FILENO, TCSAFLUSH, &old);
+    std::fputs("\n", stdout);
+  }
+  return line;
+}
+
+} // namespace sw::util

@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Reference LaunchAgent. `schoolwifi install-agent` generates this file with
+  the real binary path filled in and loads it, so you normally do not need to
+  touch it by hand.
+
+  Manual install:
+    cp launchd/com.ahpasserby.schoolwifi.plist ~/Library/LaunchAgents/
+    # edit the <string> paths below to match your install
+    launchctl bootstrap gui/$UID ~/Library/LaunchAgents/com.ahpasserby.schoolwifi.plist
+-->
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>com.ahpasserby.schoolwifi</string>
+
+  <key>ProgramArguments</key>
+  <array>
+    <string>/usr/local/bin/schoolwifi</string>
+    <string>watch</string>
+  </array>
+
+  <key>RunAtLoad</key>
+  <true/>
+
+  <!-- watch() sleeps between probes, so KeepAlive only matters if it crashes. -->
+  <key>KeepAlive</key>
+  <true/>
+
+  <key>ProcessType</key>
+  <string>Background</string>
+
+  <key>StandardOutPath</key>
+  <string>/Users/CHANGEME/Library/Logs/schoolwifi.log</string>
+  <key>StandardErrorPath</key>
+  <string>/Users/CHANGEME/Library/Logs/schoolwifi.log</string>
+</dict>
+</plist>
