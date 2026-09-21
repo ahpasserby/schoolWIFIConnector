@@ -39,11 +39,6 @@ std::string build_chksum(const std::string &token, const std::string &username,
                          const std::string &ip, const std::string &n, const std::string &type,
                          const std::string &info_param);
 
-// Extracts a value from a flat JSON object. Returns "" when absent.
-std::string json_field(const std::string &json, const std::string &key);
-// Unwraps `callback({...})` to `{...}`.
-std::string strip_jsonp(const std::string &body);
-
 portal::LoginResult login(http::Client &client, const Config &cfg, const PortalInfo &info,
                           const std::string &password);
 portal::LoginResult logout(http::Client &client, const Config &cfg, const PortalInfo &info);

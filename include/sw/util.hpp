@@ -39,6 +39,17 @@ std::string form_encode(const Pairs &pairs);
 // Replaces {name} placeholders. Adds {name|url} for a percent-encoded variant.
 std::string expand_vars(const std::string &tmpl, const std::map<std::string, std::string> &vars);
 
+// Minimal helpers for the flat JSON portals answer with. Not a parser: they
+// locate one key and return its value, which is all the portal APIs need.
+std::string json_field(const std::string &json, const std::string &key);
+// Unwraps `callback({...})` to `{...}`; returns the input unchanged if it is
+// already bare JSON.
+std::string strip_jsonp(const std::string &body);
+// A URL's query parameter, percent-decoded. "" when absent.
+std::string query_param(const std::string &url, const std::string &name);
+// Everything after '?' (without the '?'). "" when there is no query.
+std::string query_string(const std::string &url);
+
 std::string home_dir();
 std::string expand_tilde(const std::string &path);
 std::string dirname(const std::string &path);

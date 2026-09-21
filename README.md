@@ -219,6 +219,7 @@ schoolwifi install-agent    # 会先卸载再重新加载，改完配置跑这�
 | --- | --- | --- |
 | 普通 HTML 表单 | 自动找到登录页、识别账号/密码输入框、保留 hidden 字段后提交 | 一般不用 |
 | **深澜 Srun** | 纯 JS 单页应用，**没有 HTML 表单**。登录参数要用服务端下发的 challenge 现算：XXTEA 加密 + 自定义 base64 + HMAC-MD5 + SHA1 签名。已内置实现，自动识别 | 一般不用 |
+| **华为 BYOD** | 网关跳转到的是个空壳页面（`/byod/index.html`，标题 `BYOD`），没有表单也没有跳转——真正的登录页地址藏在 `/byod/byodrs/init` 接口的返回里。工具会替你发这个请求并跟过去 | 一般不用 |
 | API 式门户 | 没有表单、直接调接口的，用 `login_method = raw` 把请求重放一遍 | 要填 `login_url` + `post_body` |
 
 深澜门户的识别是自动的（看页面里的 `Srunsoft` / `srun_bx1` / `srun_portal` 特征）。
@@ -238,8 +239,7 @@ login_method = srun
 login_url = https://w.example.edu.cn/srun_portal_pc?ac_id=1
 ```
 
-> 已知限制：如果你们学校的深澜门户开了**图形验证码**，目前不支持，
-> 只能用 `schoolwifi open` 手动登录。
+> 已知限制：如果门户开了**图形验证码**，目前不支持，只能用 `schoolwifi open` 手动登录。
 
 ## 常见问题
 

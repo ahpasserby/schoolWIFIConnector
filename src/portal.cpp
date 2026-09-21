@@ -4,6 +4,7 @@
 #include <string>
 #include <thread>
 
+#include "sw/byod.hpp"
 #include "sw/dns.hpp"
 #include "sw/html.hpp"
 #include "sw/log.hpp"
@@ -362,6 +363,18 @@ LoginPage resolve_login_page(http::Client &client, const Config &cfg, const Prob
     if (next.empty()) {
       next = html::iframe_src(html);
       kind = "iframe";
+    }
+    if (next.empty() && byod::looks_like_byod(url, html)) {
+      // A BYOD shell page hides its next hop behind an API call rather than a
+      // link, so ask the portal the same question its JavaScript would.
+      byod::InitResult init = byod::init(client, cfg, url);
+      if (!init.raw.empty()) page.captures.emplace_back("byod-init.json", init.raw);
+      if (init.ok) {
+        next = init.next_url;
+        kind = init.already_registered ? "byod init (device already registered)" : "byod init";
+      } else {
+        page.note = "byod: " + init.message;
+      }
     }
     if (next.empty()) break;
 

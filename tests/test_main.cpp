@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 
+#include "sw/byod.hpp"
 #include "sw/config.hpp"
 #include "sw/dns.hpp"
 #include "sw/http.hpp"
@@ -478,20 +479,20 @@ void test_srun_login_payload() {
 }
 
 void test_srun_response_parsing() {
-  section("srun response parsing");
+  section("json helpers / srun response parsing");
 
   const std::string jsonp =
       "jQuery_1758441234({\"challenge\":\"abc123\",\"client_ip\":\"10.253.51.53\","
       "\"online_ip\":\"10.253.51.53\",\"ecode\":0,\"error\":\"ok\"})";
-  std::string body = sw::srun::strip_jsonp(jsonp);
-  check_eq(sw::srun::json_field(body, "challenge"), "abc123", "challenge extracted");
-  check_eq(sw::srun::json_field(body, "online_ip"), "10.253.51.53", "online_ip extracted");
-  check_eq(sw::srun::json_field(body, "ecode"), "0", "numeric field extracted");
-  check_eq(sw::srun::json_field(body, "error"), "ok", "error extracted");
-  check_eq(sw::srun::json_field(body, "missing"), "", "absent field yields empty");
+  std::string body = sw::util::strip_jsonp(jsonp);
+  check_eq(sw::util::json_field(body, "challenge"), "abc123", "challenge extracted");
+  check_eq(sw::util::json_field(body, "online_ip"), "10.253.51.53", "online_ip extracted");
+  check_eq(sw::util::json_field(body, "ecode"), "0", "numeric field extracted");
+  check_eq(sw::util::json_field(body, "error"), "ok", "error extracted");
+  check_eq(sw::util::json_field(body, "missing"), "", "absent field yields empty");
 
   // A bare JSON body (no callback wrapper) must survive strip_jsonp.
-  check_eq(sw::srun::json_field(sw::srun::strip_jsonp("{\"error\":\"ok\"}"), "error"), "ok",
+  check_eq(sw::util::json_field(sw::util::strip_jsonp("{\"error\":\"ok\"}"), "error"), "ok",
            "unwrapped JSON still parses");
 }
 
@@ -543,6 +544,79 @@ void test_srun_portal_detection() {
   // ac_id must still be found when CONFIG is absent but the URL carries it.
   sw::srun::PortalInfo from_url = sw::srun::parse_portal_info(url, "<html>Srunsoft</html>");
   check_eq(from_url.ac_id, "1", "acid falls back to the URL query");
+}
+
+void test_query_helpers() {
+  section("util query helpers");
+  const std::string url = "http://p.cn:30004/byod/index.html?usermac=de03-2992-d0c7&userip=10.0.0.1&ssid=E";
+  check_eq(sw::util::query_string(url), "usermac=de03-2992-d0c7&userip=10.0.0.1&ssid=E",
+           "query string without the '?'");
+  check_eq(sw::util::query_param(url, "usermac"), "de03-2992-d0c7", "parameter by name");
+  check_eq(sw::util::query_param(url, "ssid"), "E", "last parameter");
+  check_eq(sw::util::query_param(url, "wlannasid"), "", "absent parameter");
+  check_eq(sw::util::query_string("http://p.cn/x"), "", "no query at all");
+  check_eq(sw::util::query_param("http://p.cn/x?a=b%20c", "a"), "b c", "value is percent-decoded");
+}
+
+void test_byod_init() {
+  section("byod::interpret_init - reproducing index.js");
+
+  // Shaped like the real dorm portal.
+  const std::string page =
+      "http://172.29.250.5:30004/byod/index.html?usermac=de03-2992-d0c7&ssid=E";
+  const std::string encoded_page = sw::util::url_encode(page);
+
+  check(sw::byod::looks_like_byod(page, "<title>BYOD</title><script src=\"/byod/resources/byod/index.js\">"),
+        "the BYOD shell is recognised");
+  check(!sw::byod::looks_like_byod("http://10.0.0.1/login.jsp", "<form><input name=u></form>"),
+        "an ordinary portal is not mistaken for BYOD");
+
+  // index.js: url without '?' gets "?<query>&nasRedirectUrl=..."
+  sw::byod::InitResult r = sw::byod::interpret_init(
+      R"({"code":0,"msg":"","data":{"url":"http://172.29.250.5:30004/portal/login.html","userip":"172.29.26.219"}})",
+      page);
+  check(r.ok, "success response understood");
+  check_eq(r.next_url,
+           "http://172.29.250.5:30004/portal/login.html?usermac=de03-2992-d0c7&ssid=E"
+           "&nasRedirectUrl=" + encoded_page,
+           "query string and nasRedirectUrl appended after a '?'");
+  check(!r.already_registered, "not flagged as already registered");
+
+  // index.js: url that already has '?' gets "&<query>&nasRedirectUrl=..."
+  r = sw::byod::interpret_init(
+      R"({"code":0,"data":{"url":"http://1.2.3.4/login?tpl=a"}})", page);
+  check_eq(r.next_url,
+           "http://1.2.3.4/login?tpl=a&usermac=de03-2992-d0c7&ssid=E&nasRedirectUrl=" + encoded_page,
+           "existing query preserved with '&'");
+
+  // A page with no query of its own.
+  r = sw::byod::interpret_init(R"({"code":0,"data":{"url":"http://1.2.3.4/login"}})",
+                               "http://172.29.250.5:30004/byod/index.html");
+  check_eq(r.next_url,
+           "http://1.2.3.4/login?nasRedirectUrl=" +
+               sw::util::url_encode("http://172.29.250.5:30004/byod/index.html"),
+           "no source query means just nasRedirectUrl");
+
+  // "Result" in the url means the device is already registered.
+  r = sw::byod::interpret_init(R"({"code":0,"data":{"url":"http://1.2.3.4/byodResult.html"}})", page);
+  check(r.ok, "result page is still a usable next hop");
+  check(r.already_registered, "device already registered is flagged");
+
+  // code -1 with a URL in data: index.js navigates there anyway.
+  r = sw::byod::interpret_init(R"({"code":-1,"msg":"not allowed","data":"/byod/view/fail.html"})", page);
+  check(r.ok, "failure code with a url is still followed");
+  check_eq(r.next_url, "http://172.29.250.5:30004/byod/view/fail.html",
+           "relative failure url resolved against the page");
+  check_eq(r.message, "not allowed", "portal's own message kept");
+
+  // Nothing usable.
+  r = sw::byod::interpret_init(R"({"code":0,"msg":"","data":{}})", page);
+  check(!r.ok, "a response with no url is a failure");
+  check(!r.message.empty(), "failure carries an explanation");
+
+  r = sw::byod::interpret_init("not json at all", page);
+  check(!r.ok, "garbage is not mistaken for a hop");
+  check_eq(r.raw, "not json at all", "raw response preserved for diagnostics");
 }
 
 void test_netenv_parsing() {
@@ -686,6 +760,8 @@ int main() {
   test_srun_login_payload();
   test_srun_response_parsing();
   test_srun_portal_detection();
+  test_query_helpers();
+  test_byod_init();
   test_netenv_parsing();
   test_chained_portal_diagnosis();
   test_form_encoding();

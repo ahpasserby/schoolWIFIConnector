@@ -178,6 +178,68 @@ else
   bad "wrong password surfaces the portal's own error -- $(cat "$WORK/srun-bad.log")"
 fi
 
+kill "$PORTAL_PID" 2>/dev/null
+wait "$PORTAL_PID" 2>/dev/null
+
+# ---------------------------------------------------------------------------
+# Huawei-style BYOD: the page the gateway redirects to is an empty shell whose
+# next hop is only obtainable by calling the API its JavaScript would call.
+# ---------------------------------------------------------------------------
+echo ""
+echo "e2e: byod portal login"
+
+BYOD_PORT=$((PORT + 2))
+python3 "$ROOT/tests/fake_portal.py" --port "$BYOD_PORT" --mode byod 2>"$WORK/byod.log" &
+PORTAL_PID=$!
+for _ in $(seq 1 50); do
+  curl -s -o /dev/null "http://127.0.0.1:$BYOD_PORT/byod/index.html" && break
+  sleep 0.1
+done
+
+BYOD_CONFIG="$WORK/byod.ini"
+cat > "$BYOD_CONFIG" <<INI
+[network]
+ssid =
+interface =
+
+[account]
+username = 20210001
+
+[portal]
+probe_urls = http://127.0.0.1:$BYOD_PORT/probe
+failure_contains = ERROR:
+INI
+
+if SCHOOLWIFI_PASSWORD='s3cr3t p@ss' "$BIN" --config "$BYOD_CONFIG" login >"$WORK/byod-login.log" 2>&1; then
+  ok "byod login succeeds"
+else
+  bad "byod login succeeds -- $(cat "$WORK/byod-login.log")"
+fi
+grep -q "asking .* where the login page is" "$WORK/byod-login.log" \
+  && ok "calls the byod init API instead of giving up on the empty shell" \
+  || bad "calls the byod init API instead of giving up on the empty shell"
+grep -q "portal hop (byod init)" "$WORK/byod-login.log" \
+  && ok "follows the url the init API named" || bad "follows the url the init API named"
+grep -q "nasRedirectUrl=" "$WORK/byod-login.log" \
+  && ok "appends nasRedirectUrl the way index.js does" \
+  || bad "appends nasRedirectUrl the way index.js does"
+grep -q "REJECT byod-init" "$WORK/byod.log" \
+  && bad "gateway parameters were not forwarded to init" \
+  || ok "forwards the gateway parameters to init"
+
+# The captured init response must reach the diagnose dump: on a network nobody
+# can reach twice, it is the only record of what the portal actually answered.
+rm -rf "$ROOT"/schoolwifi-diagnose-*
+curl -s -o /dev/null "http://127.0.0.1:$BYOD_PORT/logout" 2>/dev/null
+"$BIN" --config "$BYOD_CONFIG" diagnose >"$WORK/byod-diag.log" 2>&1
+dump=$(ls -d "$ROOT"/schoolwifi-diagnose-* 2>/dev/null | head -1)
+if [[ -n "$dump" && -f "$dump/byod-init.json" ]] && grep -q '"url"' "$dump/byod-init.json"; then
+  ok "diagnose captured the byod init response"
+else
+  bad "diagnose captured the byod init response"
+fi
+rm -rf "$ROOT"/schoolwifi-diagnose-*
+
 # ---------------------------------------------------------------------------
 # A probe host the system resolver cannot resolve must still reach the DNS
 # fallback and then the gateway fallback. Before those were wired into probe(),

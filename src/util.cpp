@@ -270,6 +270,57 @@ std::string expand_vars(const std::string &tmpl, const std::map<std::string, std
   return out;
 }
 
+std::string strip_jsonp(const std::string &body) {
+  std::size_t open = body.find('(');
+  std::size_t close = body.rfind(')');
+  if (open == std::string::npos || close == std::string::npos || close <= open) return body;
+  return body.substr(open + 1, close - open - 1);
+}
+
+std::string json_field(const std::string &json, const std::string &key) {
+  std::string needle = "\"" + key + "\"";
+  std::size_t pos = json.find(needle);
+  if (pos == std::string::npos) return "";
+
+  std::size_t i = pos + needle.size();
+  while (i < json.size() && std::isspace(static_cast<unsigned char>(json[i]))) ++i;
+  if (i >= json.size() || json[i] != ':') return "";
+  ++i;
+  while (i < json.size() && std::isspace(static_cast<unsigned char>(json[i]))) ++i;
+  if (i >= json.size()) return "";
+
+  if (json[i] == '"') {
+    ++i;
+    std::string out;
+    while (i < json.size() && json[i] != '"') {
+      if (json[i] == '\\' && i + 1 < json.size()) ++i;  // keep escaped chars verbatim
+      out += json[i++];
+    }
+    return out;
+  }
+
+  std::size_t end = i;
+  while (end < json.size() && json[end] != ',' && json[end] != '}') ++end;
+  return trim(json.substr(i, end - i));
+}
+
+std::string query_string(const std::string &url) {
+  std::size_t q = url.find('?');
+  if (q == std::string::npos) return "";
+  std::string query = url.substr(q + 1);
+  std::size_t hash = query.find('#');
+  return hash == std::string::npos ? query : query.substr(0, hash);
+}
+
+std::string query_param(const std::string &url, const std::string &name) {
+  for (const std::string &pair : split(query_string(url), '&')) {
+    std::size_t eq = pair.find('=');
+    if (eq == std::string::npos) continue;
+    if (iequals(pair.substr(0, eq), name)) return url_decode(pair.substr(eq + 1));
+  }
+  return "";
+}
+
 std::string home_dir() {
   const char *h = std::getenv("HOME");
   return h ? std::string(h) : std::string();

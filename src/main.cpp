@@ -456,6 +456,14 @@ int cmd_diagnose(const sw::Config &cfg) {
   std::printf("\n== saved ==\n");
   std::printf("  %s/portal.html\n", dir.c_str());
 
+  for (const auto &capture : page.captures) {
+    std::string path = dir + "/" + capture.first;
+    if (sw::util::write_file(path, capture.second)) {
+      std::printf("  %s  (%zu bytes, captured during discovery)\n", path.c_str(),
+                  capture.second.size());
+    }
+  }
+
   std::string origin = sw::util::url_origin(page.url);
   int index = 0;
   for (const std::string &src : sw::html::script_srcs(page.html)) {

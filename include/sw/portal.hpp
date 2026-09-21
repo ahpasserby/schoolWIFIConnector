@@ -36,6 +36,10 @@ struct LoginPage {
   std::string html;
   std::vector<std::string> trail;  // every hop taken to get here
   std::string note;
+  // Intermediate API responses fetched during discovery -- the calls the
+  // page's JavaScript would have made. `diagnose` writes these into its dump,
+  // because when discovery goes wrong they are the only record of why.
+  std::vector<std::pair<std::string, std::string>> captures;  // filename -> body
 };
 
 // Walks meta-refresh / JS / iframe hops from the probe response until a page

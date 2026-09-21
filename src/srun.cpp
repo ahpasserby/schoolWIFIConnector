@@ -91,18 +91,6 @@ std::string js_config_string(const std::string &html, const std::string &key) {
   return "";
 }
 
-std::string query_param(const std::string &url, const std::string &name) {
-  std::size_t q = url.find('?');
-  if (q == std::string::npos) return "";
-  std::string query = url.substr(q + 1);
-  for (const std::string &pair : util::split(query, '&')) {
-    std::size_t eq = pair.find('=');
-    if (eq == std::string::npos) continue;
-    if (util::iequals(pair.substr(0, eq), name)) return util::url_decode(pair.substr(eq + 1));
-  }
-  return "";
-}
-
 } // namespace
 
 std::string base64(const std::string &data) {
@@ -214,40 +202,6 @@ std::string build_chksum(const std::string &token, const std::string &username,
   return sha1_hex(chkstr);
 }
 
-std::string strip_jsonp(const std::string &body) {
-  std::size_t open = body.find('(');
-  std::size_t close = body.rfind(')');
-  if (open == std::string::npos || close == std::string::npos || close <= open) return body;
-  return body.substr(open + 1, close - open - 1);
-}
-
-std::string json_field(const std::string &json, const std::string &key) {
-  std::string needle = "\"" + key + "\"";
-  std::size_t pos = json.find(needle);
-  if (pos == std::string::npos) return "";
-
-  std::size_t i = pos + needle.size();
-  while (i < json.size() && std::isspace(static_cast<unsigned char>(json[i]))) ++i;
-  if (i >= json.size() || json[i] != ':') return "";
-  ++i;
-  while (i < json.size() && std::isspace(static_cast<unsigned char>(json[i]))) ++i;
-  if (i >= json.size()) return "";
-
-  if (json[i] == '"') {
-    ++i;
-    std::string out;
-    while (i < json.size() && json[i] != '"') {
-      if (json[i] == '\\' && i + 1 < json.size()) ++i;  // keep escaped chars verbatim
-      out += json[i++];
-    }
-    return out;
-  }
-
-  std::size_t end = i;
-  while (end < json.size() && json[end] != ',' && json[end] != '}') ++end;
-  return util::trim(json.substr(i, end - i));
-}
-
 bool looks_like_srun(const std::string &url, const std::string &html) {
   return util::icontains(url, "srun_portal") || util::icontains(html, "srunsoft") ||
          util::icontains(html, "srun_bx1") || util::icontains(html, "/cgi-bin/srun_portal");
@@ -258,7 +212,7 @@ PortalInfo parse_portal_info(const std::string &page_url, const std::string &htm
   info.origin = util::url_origin(page_url);
 
   info.ac_id = js_config_string(html, "acid");
-  if (info.ac_id.empty()) info.ac_id = query_param(page_url, "ac_id");
+  if (info.ac_id.empty()) info.ac_id = util::query_param(page_url, "ac_id");
   if (info.ac_id.empty()) {
     info.ac_id = "1";  // the near-universal default
     info.note = "ac_id not found on the page; assuming 1";
@@ -294,17 +248,17 @@ portal::LoginResult login(http::Client &client, const Config &cfg, const PortalI
     return result;
   }
 
-  std::string body = strip_jsonp(challenge.body);
-  std::string token = json_field(body, "challenge");
+  std::string body = util::strip_jsonp(challenge.body);
+  std::string token = util::json_field(body, "challenge");
   if (token.empty()) {
-    std::string err = json_field(body, "error");
+    std::string err = util::json_field(body, "error");
     result.message = "portal issued no challenge" + (err.empty() ? "" : " (" + err + ")");
     result.response_body = challenge.body;
     return result;
   }
 
-  std::string online_ip = json_field(body, "online_ip");
-  if (online_ip.empty()) online_ip = json_field(body, "client_ip");
+  std::string online_ip = util::json_field(body, "online_ip");
+  if (online_ip.empty()) online_ip = util::json_field(body, "client_ip");
   if (!online_ip.empty()) ip = online_ip;
   if (ip.empty()) {
     result.message = "could not determine this machine's address as the portal sees it";
@@ -345,13 +299,13 @@ portal::LoginResult login(http::Client &client, const Config &cfg, const PortalI
     return result;
   }
 
-  std::string reply = strip_jsonp(resp.body);
+  std::string reply = util::strip_jsonp(resp.body);
   result.status = resp.status;
   result.response_body = resp.body;
 
-  std::string error = json_field(reply, "error");
-  std::string error_msg = json_field(reply, "error_msg");
-  std::string suc_msg = json_field(reply, "suc_msg");
+  std::string error = util::json_field(reply, "error");
+  std::string error_msg = util::json_field(reply, "error_msg");
+  std::string suc_msg = util::json_field(reply, "suc_msg");
 
   if (util::iequals(error, "ok")) {
     result.success = true;
@@ -382,8 +336,8 @@ portal::LoginResult logout(http::Client &client, const Config &cfg, const Portal
     return result;
   }
 
-  std::string reply = strip_jsonp(resp.body);
-  std::string error = json_field(reply, "error");
+  std::string reply = util::strip_jsonp(resp.body);
+  std::string error = util::json_field(reply, "error");
   result.status = resp.status;
   result.response_body = resp.body;
   result.success = util::iequals(error, "ok") || util::icontains(reply, "logout_ok");

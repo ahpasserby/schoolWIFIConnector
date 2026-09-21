@@ -83,6 +83,11 @@ class Portal(BaseHTTPRequestHandler):
             if state["online"]:
                 self._send(200, "<HTML><HEAD><TITLE>Success</TITLE></HEAD>"
                                 "<BODY>Success</BODY></HTML>")
+            elif state["mode"] == "byod":
+                # A BYOD gateway hands its own parameters to the portal.
+                self._send(200, "<html><body><script>top.self.location.href="
+                                f"'http://{host}/byod/index.html?usermac=de03-2992-d0c7"
+                                f"&userip=10.1.2.3&ssid=E';</script></body></html>")
             elif state["mode"] == "srun":
                 # Mirrors the real BNBU capture: HTTP 200 with an injected body
                 # carrying a JS redirect, rather than a clean 302.
@@ -96,6 +101,37 @@ class Portal(BaseHTTPRequestHandler):
             self._send(200, '<html><head><meta http-equiv="refresh" '
                             'content="0;url=/srun_portal_pc?ac_id=1&theme=pro">'
                             '</head><body>redirecting</body></html>')
+            return
+
+        if path == "/byod/index.html":
+            # The real shell: empty body, no form, no redirect -- everything is
+            # decided by the script it loads.
+            self._send(200, '<!doctype html><html><head><meta charset="utf-8">'
+                            '<title>BYOD</title></head><body>'
+                            '<div id="tip"></div></body>'
+                            '<script type="text/javascript" '
+                            'src="/byod/resources/byod/index.js?_=00001"></script></html>')
+            return
+
+        if path == "/byod/resources/byod/index.js":
+            self._send(200, "window.onload=function(){/* calls /byod/byodrs/init */};",
+                       ctype="application/javascript")
+            return
+
+        if path == "/byod/byodrs/init":
+            # Every gateway parameter must have been forwarded, exactly as
+            # index.js forwards them.
+            missing = [k for k in ("usermac", "userip", "ssid") if not query.get(k)]
+            if missing:
+                self.log_message("REJECT byod-init missing %s", ",".join(missing))
+                self._send(200, '{"code":-1,"msg":"missing gateway parameters","data":""}',
+                           ctype="application/json")
+                return
+            self._send(200,
+                       '{"code":0,"msg":"","data":{"userip":"10.1.2.3",'
+                       '"byodMacRegistInfo":{"wlannasid":"","shopIdE":""},'
+                       f'"url":"http://{host}/login"}}}}',
+                       ctype="application/json")
             return
 
         if path == "/static/portal-logic.js":
@@ -236,8 +272,9 @@ class Portal(BaseHTTPRequestHandler):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=8111)
-    ap.add_argument("--mode", choices=["form", "srun"], default="form",
-                    help="form = classic HTML form portal; srun = Srun/深澜 SPA portal")
+    ap.add_argument("--mode", choices=["form", "srun", "byod"], default="form",
+                    help="form = classic HTML form portal; srun = Srun/深澜 SPA portal; "
+                         "byod = Huawei-style BYOD shell that hides the login page behind an API")
     args = ap.parse_args()
     state["mode"] = args.mode
     server = HTTPServer(("127.0.0.1", args.port), Portal)

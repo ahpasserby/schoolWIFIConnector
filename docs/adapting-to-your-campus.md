@@ -118,6 +118,27 @@ login_url = https://w.example.edu.cn/srun_portal_pc?ac_id=1
 
 > 开了图形验证码的深澜门户目前不支持。
 
+### 4a. 华为 BYOD 门户
+
+`page title` 是 `BYOD`、地址里有 `/byod/`、`== forms ==` 是 `(none found)`：
+
+```
+login page: http://10.x.x.x:30004/byod/index.html?usermac=...&userip=...&ssid=E
+page title: BYOD
+```
+
+**已内置支持，不用配置。** 这个页面是空壳，真正的登录页地址藏在
+`/byod/byodrs/init` 接口里，工具会替你发这个请求并跟过去。日志里会看到：
+
+```
+INFO  byod: asking http://10.x.x.x:30004/byod/byodrs/init where the login page is
+INFO  byod: portal says the login page is http://...
+INFO  portal hop (byod init): http://...
+```
+
+如果失败，`schoolwifi-diagnose-*/byod-init.json` 里是接口的原始返回，
+提 issue 时带上它（记得脱敏 IP/MAC）。
+
 ### 4b. 其它 API 式门户
 
 不是深澜、但同样没有表单、直接调接口的，用 `raw` 模式把请求原样重放：

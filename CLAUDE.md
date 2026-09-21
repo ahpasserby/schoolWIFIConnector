@@ -51,6 +51,7 @@ portals:
 main.cpp        subcommand dispatch, password resolution, LaunchAgent plist
   portal.cpp    THE STATE MACHINE: probe -> resolve page -> plan -> submit -> verify
     srun.cpp    Srun (深澜) portals: challenge/response login, no HTML form
+    byod.cpp    Huawei BYOD shells: the login URL comes from an API, not a link
     html.cpp    forgiving <form>/<input> scanner + redirect-hint extraction
     netenv.cpp  proxy / VPN-tunnel detection for diagnostics
     http.cpp    libcurl session (cookies persist across requests in a Client)
