@@ -670,6 +670,65 @@ void test_byod_init() {
   check_eq(r.raw, "not json at all", "raw response preserved for diagnostics");
 }
 
+void test_byod_login_payload() {
+  section("byod login payload");
+
+  check_eq(sw::util::base64_encode("s3cr3t p@ss"), "czNjcjN0IHBAc3M=", "standard base64");
+  check_eq(sw::util::base64_encode("a"), "YQ==", "one-byte tail");
+  check_eq(sw::util::base64_encode("ab"), "YWI=", "two-byte tail");
+  check_eq(sw::util::base64_encode(""), "", "empty");
+
+  bool ascii = false;
+  check_eq(sw::byod::encode_password("s3cr3t p@ss", &ascii), "czNjcjN0IHBAc3M=",
+           "password encoded the way the portal's JS does");
+  check(ascii, "an ASCII password is reported as such");
+  // The portal's escape doubles backslashes before encoding.
+  check_eq(sw::byod::encode_password("a\\b", &ascii), sw::util::base64_encode("a\\\\b"),
+           "backslash is doubled first");
+  sw::byod::encode_password("\xe4\xb8\xad", &ascii);
+  check(!ascii, "a non-ASCII password is flagged, since that escape is not reproduced");
+
+  // Values are copied verbatim so a number stays a number.
+  const std::string policy =
+      R"({"code":0,"licenseCode":"LIC-123","userGroupId":42,"validationType":0,)"
+      R"("guestManagerId":"gm-9","defaultServiceTypeId":-1})";
+  check_eq(sw::util::json_raw_field(policy, "licenseCode"), "\"LIC-123\"",
+           "string keeps its quotes");
+  check_eq(sw::util::json_raw_field(policy, "userGroupId"), "42", "number stays unquoted");
+  check_eq(sw::util::json_raw_field(policy, "validationType"), "0", "zero is not mistaken for absent");
+  check_eq(sw::util::json_raw_field(policy, "missing"), "", "absent field yields empty");
+
+  // The login page: three hidden inputs, no type=password anywhere.
+  const std::string login_html =
+      R"(<html><body><div id="app"><input type="text" id="id_userName"></div>)"
+      R"(<form method="post"><input type="hidden" name="userName" value="">)"
+      R"(<input type="hidden" name="userPwd" value="">)"
+      R"(<input type="hidden" name="serviceType" value=""></form></body></html>)";
+  check(sw::byod::looks_like_login_page(
+            "http://10.0.0.1:30004/byod/view/byod/template/templatePc.html?customId=19",
+            login_html),
+        "the BYOD login page is recognised");
+  check(!sw::byod::looks_like_login_page("http://10.0.0.1/login.jsp",
+                                         "<form><input name=u><input type=password name=p></form>"),
+        "an ordinary form portal is not");
+  // Mentioning the names is not enough: the visible boxes carry ids like
+  // "id_userName", and matching those claimed pages that have no such form.
+  check(!sw::byod::looks_like_login_page(
+            "http://10.0.0.1:30004/byod/view/byod/template/templatePc.html",
+            R"(<html><body><input type="text" id="id_userName">)"
+            R"(<input type="password" id="id_userPwd"></body></html>)"),
+        "ids alone do not make it a BYOD login page");
+
+  // And the generic planner must still refuse it, naming the fields.
+  sw::portal::LoginPage page;
+  page.url = "http://10.0.0.1:30004/byod/view/byod/template/templatePc.html";
+  page.html = login_html;
+  sw::Config cfg;
+  sw::portal::FormPlan plan = sw::portal::plan_form_login(cfg, page, "u", "p");
+  check(!plan.ok, "the hidden triple cannot be planned as a normal form");
+  check(sw::util::icontains(plan.reason, "userPwd"), "and the refusal names userPwd");
+}
+
 void test_netenv_parsing() {
   section("netenv parsing");
 
@@ -832,6 +891,7 @@ int main() {
   test_srun_portal_detection();
   test_query_helpers();
   test_byod_init();
+  test_byod_login_payload();
   test_netenv_parsing();
   test_chained_portal_diagnosis();
   test_form_encoding();

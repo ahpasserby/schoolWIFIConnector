@@ -26,6 +26,11 @@ in `include/sw/` leaves stale objects linked against the old layout, and the
 resulting ABI mismatch surfaces as unrelated nonsense (a field reading empty,
 for instance) rather than as a build error.
 
+macOS ships GNU make 3.81, which compares mtimes only to the second. Editing a
+source file in the same second its object was compiled leaves the object stale
+with no warning — if a change seems not to take effect, `touch` the file or
+`make clean` before concluding anything about the code.
+
 There is **no CMake and no package manager** — this is deliberate. Everything
 linked (`libcurl`, CoreWLAN, Security, Foundation) ships with macOS and the
 Command Line Tools, so `git clone && make` works on a bare machine. Do not

@@ -4,6 +4,7 @@
 
 #include "sw/config.hpp"
 #include "sw/http.hpp"
+#include "sw/portal.hpp"
 
 // Huawei-style BYOD portals (Agile Controller / iMaster NCE). The page the
 // gateway redirects to is an empty shell: no form, no redirect hint, and all
@@ -29,5 +30,19 @@ InitResult init(http::Client &client, const Config &cfg, const std::string &page
 // Splits out the pure part: given the init response and the page URL, work out
 // where to go next, following the same rules as index.js.
 InitResult interpret_init(const std::string &raw, const std::string &page_url);
+
+// The login page itself. Its three inputs are all type=hidden: the visible
+// boxes carry only `id`, and templatePc.js copies their values across before
+// POSTing JSON to an API. The <form> is never submitted, so the generic form
+// path cannot work here either.
+bool looks_like_login_page(const std::string &url, const std::string &html);
+
+// Encodes the password the way imc_byod_function_base64_with_chinese does.
+// ASCII only -- the portal's own escape for non-ASCII is not reproduced, and
+// `ascii_only` reports whether that matters for this password.
+std::string encode_password(const std::string &password, bool *ascii_only);
+
+portal::LoginResult login(http::Client &client, const Config &cfg, const portal::LoginPage &page,
+                          const std::string &password);
 
 } // namespace sw::byod

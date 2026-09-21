@@ -10,7 +10,9 @@
 #include <cctype>
 #include <cerrno>
 #include <cstdio>
+#include <cstdint>
 #include <cstdlib>
+#include <utility>
 #include <ctime>
 #include <fstream>
 #include <iostream>
@@ -325,6 +327,77 @@ std::string json_field(const std::string &json, const std::string &key) {
   std::size_t end = i;
   while (end < json.size() && json[end] != ',' && json[end] != '}') ++end;
   return trim(json.substr(i, end - i));
+}
+
+namespace {
+
+// Start and length of a JSON value's source text, or {npos, 0}.
+std::pair<std::size_t, std::size_t> json_value_span(const std::string &json,
+                                                    const std::string &key) {
+  std::string needle = "\"" + key + "\"";
+  std::size_t pos = json.find(needle);
+  if (pos == std::string::npos) return {std::string::npos, 0};
+
+  std::size_t i = pos + needle.size();
+  while (i < json.size() && std::isspace(static_cast<unsigned char>(json[i]))) ++i;
+  if (i >= json.size() || json[i] != ':') return {std::string::npos, 0};
+  ++i;
+  while (i < json.size() && std::isspace(static_cast<unsigned char>(json[i]))) ++i;
+  if (i >= json.size()) return {std::string::npos, 0};
+
+  std::size_t start = i;
+  if (json[i] == '"') {
+    ++i;
+    while (i < json.size() && json[i] != '"') {
+      if (json[i] == '\\' && i + 1 < json.size()) ++i;
+      ++i;
+    }
+    if (i < json.size()) ++i;  // closing quote
+    return {start, i - start};
+  }
+  while (i < json.size() && json[i] != ',' && json[i] != '}' && json[i] != ']') ++i;
+  return {start, trim(json.substr(start, i - start)).size()};
+}
+
+} // namespace
+
+std::string json_raw_field(const std::string &json, const std::string &key) {
+  auto span = json_value_span(json, key);
+  if (span.first == std::string::npos) return "";
+  return trim(json.substr(span.first, span.second));
+}
+
+std::string base64_encode(const std::string &data) {
+  static const char *alphabet =
+      "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+  std::string out;
+  std::size_t full = data.size() - data.size() % 3;
+
+  for (std::size_t i = 0; i < full; i += 3) {
+    std::uint32_t n = (static_cast<unsigned char>(data[i]) << 16) |
+                      (static_cast<unsigned char>(data[i + 1]) << 8) |
+                      static_cast<unsigned char>(data[i + 2]);
+    out += alphabet[(n >> 18) & 63];
+    out += alphabet[(n >> 12) & 63];
+    out += alphabet[(n >> 6) & 63];
+    out += alphabet[n & 63];
+  }
+
+  std::size_t rest = data.size() - full;
+  if (rest == 1) {
+    std::uint32_t n = static_cast<std::uint32_t>(static_cast<unsigned char>(data[full])) << 16;
+    out += alphabet[(n >> 18) & 63];
+    out += alphabet[(n >> 12) & 63];
+    out += "==";
+  } else if (rest == 2) {
+    std::uint32_t n = (static_cast<std::uint32_t>(static_cast<unsigned char>(data[full])) << 16) |
+                      (static_cast<std::uint32_t>(static_cast<unsigned char>(data[full + 1])) << 8);
+    out += alphabet[(n >> 18) & 63];
+    out += alphabet[(n >> 12) & 63];
+    out += alphabet[(n >> 6) & 63];
+    out += '=';
+  }
+  return out;
 }
 
 std::string query_string(const std::string &url) {

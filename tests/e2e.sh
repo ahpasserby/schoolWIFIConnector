@@ -228,6 +228,21 @@ grep -q "No host part in the URL" "$WORK/byod-login.log" \
 grep -q "REJECT byod-init" "$WORK/byod.log" \
   && bad "gateway parameters were not forwarded to init" \
   || ok "forwards the gateway parameters to init"
+grep -q "fetching login policy" "$WORK/byod-login.log" \
+  && ok "fetches the login policy before submitting" \
+  || bad "fetches the login policy before submitting"
+grep -q "REJECT byod-" "$WORK/byod.log" \
+  && bad "controller rejected a field: $(grep -o 'REJECT byod-[a-z]*' "$WORK/byod.log" | head -1)" \
+  || ok "base64 password and echoed policy fields all accepted"
+
+curl -s -o /dev/null "http://127.0.0.1:$BYOD_PORT/logout" 2>/dev/null
+SCHOOLWIFI_PASSWORD='wrong-password' "$BIN" --config "$BYOD_CONFIG" login >"$WORK/byod-bad.log" 2>&1
+if grep -q "password is incorrect" "$WORK/byod-bad.log" \
+   && grep -q "REJECT byod-password" "$WORK/byod.log"; then
+  ok "a wrong password surfaces the controller's own error code"
+else
+  bad "a wrong password surfaces the controller's own error code"
+fi
 
 # The captured init response must reach the diagnose dump: on a network nobody
 # can reach twice, it is the only record of what the portal actually answered.

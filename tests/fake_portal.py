@@ -123,10 +123,32 @@ class Portal(BaseHTTPRequestHandler):
             # scripts, but it is NOT the bootstrap shell -- asking init about
             # it used to return this same page again, with the query string
             # doubling on every pass until the hop budget ran out.
-            self._send(200, '<!doctype html><html><head><title>Portal</title></head>'
-                            '<body><div id="app"></div></body>'
-                            '<script src="/byod/resources/byod/templatePc.js"></script>'
-                            '</html>')
+            #
+            # Its three inputs are all hidden, exactly as the real one: the
+            # visible boxes carry only `id`, and templatePc.js copies their
+            # values across before POSTing JSON. Nothing ever submits the form.
+            body = ('<!doctype html><html><head><title>BYOD</title></head><body>'
+                    '<div id="app"><input type="text" id="id_userName">'
+                    '<input type="password" id="id_userPwd"></div>')
+            if state["mode"] != "byod-loop":
+                body += ('<form method="post">'
+                         '<input type="hidden" name="userName" value="">'
+                         '<input type="hidden" name="userPwd" value="">'
+                         '<input type="hidden" name="serviceType" value="">'
+                         '</form>')
+            body += ('</body><script src="/byod/resources/byod/templatePc.js"></script>'
+                     '</html>')
+            self._send(200, body)
+            return
+
+        if path == "/byod/byodrs/login/init":
+            # The policy identifiers the login request has to echo back.
+            self._send(200,
+                       '{"code":0,"errormsg":"success","msg":"",'
+                       '"licenseCode":"LIC-123","userGroupId":42,"guestManagerId":"gm-9",'
+                       '"validationType":0,"defaultServiceTypeId":-1,"serviceList":[],'
+                       '"passwordIntervalTime":60}',
+                       ctype="application/json")
             return
 
         if path == "/byod/resources/byod/templatePc.js":
@@ -145,12 +167,10 @@ class Portal(BaseHTTPRequestHandler):
             # Relative, and carrying an absolute URL in its own query -- which
             # is what the real portal returns, and what used to be misread as
             # an absolute URL and handed to curl without a host.
-            target = ("/byod/view/byod/template/templatePc.html?customId=19"
-                      if state["mode"] == "byod-loop"
-                      else "/login?userurl=http://captive.apple.com/hotspot-detect.html")
+            target = "/byod/view/byod/template/templatePc.html?customId=19"
             self._send(200,
                        '{"code":0,"msg":"","data":{"userip":"10.1.2.3",'
-                       '"byodMacRegistInfo":{"wlannasid":"","shopIdE":""},'
+                       '"byodMacRegistInfo":{"wlannasid":"nas-7","shopIdE":"RkmEybLA7v"},'
                        f'"url":"{target}"}}}}',
                        ctype="application/json")
             return
@@ -261,11 +281,72 @@ class Portal(BaseHTTPRequestHandler):
         reply('{"error":"ok","suc_msg":"login_ok","username":"%s","online_ip":"%s"}'
               % (username, ip))
 
+    def _byod_default_login(self, payload):
+        """Validates the JSON login the way the real controller does: the
+        password arrives base64-encoded, and the policy identifiers from
+        login/init have to come back unchanged and with their original types."""
+        import base64 as _b64
+
+        def reject(msg, marker):
+            self.log_message("REJECT %s", marker)
+            self._send(200, '{"code":-1,"msg":"%s","data":{}}' % msg,
+                       ctype="application/json")
+
+        if payload.get("userName") != USERNAME:
+            reject("E63632 user not found", "byod-user")
+            return
+        try:
+            decoded = _b64.b64decode(payload.get("userPassword", "")).decode("utf-8")
+        except Exception:
+            reject("E0001 password is not base64", "byod-password-encoding")
+            return
+        if decoded != PASSWORD:
+            reject("E63635 password is incorrect", "byod-password")
+            return
+
+        # Echoed verbatim, types included: userGroupId was a number.
+        if payload.get("licenseCode") != "LIC-123":
+            reject("E0002 licenseCode not echoed", "byod-license")
+            return
+        if payload.get("userGroupId") != 42:
+            reject("E0003 userGroupId lost its type", "byod-usergroup")
+            return
+        if payload.get("shopIdE") != "RkmEybLA7v":
+            reject("E0004 shopIdE missing", "byod-shopid")
+            return
+        if payload.get("wlannasid") != "nas-7":
+            reject("E0005 wlannasid missing", "byod-wlannasid")
+            return
+
+        state["online"] = True
+        self._send(200,
+                   '{"code":0,"msg":"login_ok","data":{"ifModifyPwd":false,'
+                   '"isThirdpartUrl":false,"url":"/byod/view/byod/byodResult.html",'
+                   '"byodMacRegistInfo":{}}}',
+                   ctype="application/json")
+
     def do_POST(self):
         path = urllib.parse.urlparse(self.path).path
         length = int(self.headers.get("Content-Length", 0))
-        fields = urllib.parse.parse_qs(self.rfile.read(length).decode("utf-8"))
+        raw = self.rfile.read(length).decode("utf-8")
+
+        if path == "/byod/byodrs/login/defaultLogin":
+            import json as _json
+            try:
+                payload = _json.loads(raw)
+            except ValueError:
+                self.log_message("REJECT byod-not-json")
+                self._send(200, '{"code":-1,"msg":"E0000 body is not JSON","data":{}}',
+                           ctype="application/json")
+                return
+            self._byod_default_login(payload)
+            return
+
+        fields = urllib.parse.parse_qs(raw)
         flat = {k: v[0] for k, v in fields.items()}
+
+        if path == "/byod/byodrs/login/defaultLogin":
+            return  # handled below from the raw body
 
         if path != "/auth":
             self._send(404, "not found")

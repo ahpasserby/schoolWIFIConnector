@@ -655,6 +655,30 @@ LoginResult login(http::Client &client, const Config &cfg, const std::string &pa
     return srun_result;
   }
 
+  // The BYOD login page's <form> is never submitted: its three inputs are
+  // hidden and templatePc.js POSTs JSON to an API instead.
+  if (byod::looks_like_login_page(page.url, page.html)) {
+    log::info("detected a Huawei BYOD login page at " + util::url_origin(page.url));
+    LoginResult byod_result = byod::login(client, cfg, page, password);
+    if (!byod_result.success) return byod_result;
+
+    Probe last;
+    for (int attempt = 1; attempt <= kVerifyAttempts; ++attempt) {
+      sleep_ms(kVerifyDelayMs);
+      last = probe(client, cfg);
+      if (last.state == State::Online) {
+        byod_result.message += "; verified online";
+        return byod_result;
+      }
+      log::info("waiting for connectivity (" + std::to_string(attempt) + "/" +
+                std::to_string(kVerifyAttempts) + "): not online yet");
+    }
+    byod_result.success = false;
+    byod_result.message = "byod accepted the login (" + byod_result.message + ") but " +
+                          explain_failed_verification(last, byod_result.posted_to);
+    return byod_result;
+  }
+
   FormPlan plan = plan_form_login(cfg, page, cfg.username, password);
   if (!plan.ok) {
     result.message = plan.reason;

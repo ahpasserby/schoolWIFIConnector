@@ -46,6 +46,13 @@ std::string expand_vars(const std::string &tmpl, const std::map<std::string, std
 // Minimal helpers for the flat JSON portals answer with. Not a parser: they
 // locate one key and return its value, which is all the portal APIs need.
 std::string json_field(const std::string &json, const std::string &key);
+// The value's source text, quotes and all. Copying a value verbatim from one
+// response into the next request preserves whether the portal used a string or
+// a number, which a re-serialised value would not.
+std::string json_raw_field(const std::string &json, const std::string &key);
+// Standard base64 (RFC 4648 alphabet). srun.cpp has its own over a different
+// alphabet; this is the ordinary one.
+std::string base64_encode(const std::string &data);
 // Unwraps `callback({...})` to `{...}`; returns the input unchanged if it is
 // already bare JSON.
 std::string strip_jsonp(const std::string &body);
