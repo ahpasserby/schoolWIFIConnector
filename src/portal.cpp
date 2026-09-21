@@ -4,6 +4,7 @@
 #include <string>
 #include <thread>
 
+#include "sw/dns.hpp"
 #include "sw/html.hpp"
 #include "sw/log.hpp"
 #include "sw/util.hpp"
@@ -74,6 +75,58 @@ template <std::size_t N>
 std::string pick_field(const std::vector<html::Field> &fields, const char *const (&hints)[N],
                        const std::string &exclude = "") {
   return pick_field(fields, hints, N, exclude);
+}
+
+// A campus portal's hostname often exists only in the campus DNS. If the user
+// pinned a public resolver on the interface (System Settings > Network > DNS),
+// the system resolver will never see that zone and the name simply does not
+// exist. Ask the DNS server this network handed out over DHCP instead, and pin
+// the answer for the rest of the session.
+bool pin_host_via_network_dns(http::Client &client, const Config &cfg, const std::string &url) {
+  util::UrlParts parts = util::parse_url(url);
+  if (parts.host.empty()) return false;
+  if (client.has_resolve_for(parts.host)) return false;  // already pinned or already failed
+
+  std::vector<std::string> servers;
+  if (!cfg.dns_server.empty()) servers.push_back(cfg.dns_server);
+  for (const std::string &s : dns::dhcp_nameservers(cfg.interface)) servers.push_back(s);
+  if (servers.empty()) {
+    log::debug("no DHCP nameserver to fall back to");
+    return false;
+  }
+
+  for (const std::string &server : servers) {
+    std::vector<std::string> ips = dns::resolve_a(server, parts.host);
+    if (ips.empty()) continue;
+
+    log::info("system DNS could not resolve " + parts.host + "; " + server + " says " + ips[0]);
+    // Pin every port the portal might bounce between, not just this URL's.
+    client.add_resolve(parts.host, parts.port, ips[0]);
+    client.add_resolve(parts.host, "80", ips[0]);
+    client.add_resolve(parts.host, "443", ips[0]);
+    return true;
+  }
+
+  log::debug("no DHCP nameserver could resolve " + parts.host);
+  return false;
+}
+
+// Every portal-facing fetch goes through here so the DNS fallback applies
+// uniformly.
+http::Response fetch(http::Client &client, const Config &cfg, const http::Request &req) {
+  http::Response resp = client.send(req);
+  if (resp.ok || !dns::is_resolve_failure(resp.error)) return resp;
+  if (!pin_host_via_network_dns(client, cfg, req.url)) return resp;
+  return client.send(req);
+}
+
+http::Request get_request(const std::string &url, int timeout_sec = 10) {
+  http::Request req;
+  req.url = url;
+  req.method = "GET";
+  req.follow = true;
+  req.timeout_sec = timeout_sec;
+  return req;
 }
 
 std::string first_line(const std::string &s, std::size_t limit = 200) {
@@ -147,7 +200,7 @@ LoginPage resolve_login_page(http::Client &client, const Config &cfg, const Prob
   if (!cfg.login_url.empty()) {
     page.url = cfg.login_url;
     page.trail.push_back("config login_url: " + cfg.login_url);
-    http::Response resp = client.get(cfg.login_url, /*follow=*/true, 10);
+    http::Response resp = fetch(client, cfg, get_request(cfg.login_url));
     page.url = resp.final_url.empty() ? cfg.login_url : resp.final_url;
     page.html = resp.body;
     if (!resp.ok) page.note = "fetch failed: " + resp.error;
@@ -169,7 +222,7 @@ LoginPage resolve_login_page(http::Client &client, const Config &cfg, const Prob
   std::vector<std::string> seen;
   for (int hop = 0; hop < kMaxHops; ++hop) {
     if (html.empty()) {
-      http::Response resp = client.get(url, /*follow=*/true, 10);
+      http::Response resp = fetch(client, cfg, get_request(url));
       if (!resp.ok) {
         page.note = "fetch failed: " + resp.error;
         break;
@@ -393,7 +446,7 @@ LoginResult login(http::Client &client, const Config &cfg, const std::string &pa
                                                       {{"username", cfg.username},
                                                        {"password", kMaskedPassword}}));
 
-    http::Response resp = client.send(req);
+    http::Response resp = fetch(client, cfg, req);
     if (!resp.ok) {
       result.message = "request failed: " + resp.error;
       return result;
@@ -436,7 +489,7 @@ LoginResult login(http::Client &client, const Config &cfg, const std::string &pa
   }
 
   log::info("submitting login to " + plan.action_url + " as " + cfg.username);
-  http::Response resp = client.send(req);
+  http::Response resp = fetch(client, cfg, req);
   if (!resp.ok) {
     result.message = "submit failed: " + resp.error;
     return result;
@@ -463,7 +516,7 @@ LoginResult logout(http::Client &client, const Config &cfg) {
   result.posted_to = req.url;
   result.method = req.method;
 
-  http::Response resp = client.send(req);
+  http::Response resp = fetch(client, cfg, req);
   if (!resp.ok) {
     result.message = "request failed: " + resp.error;
     return result;

@@ -85,6 +85,7 @@ bool load_config(const std::string &path, Config *out, std::string *err) {
 
     if (key == "ssid") out->ssid = value;
     else if (key == "interface") out->interface = value;
+    else if (key == "dns_server") out->dns_server = value;
     else if (key == "username") out->username = value;
     else if (key == "keychain_service") out->keychain_service = value;
     else if (key == "password") out->password = value;
@@ -128,7 +129,10 @@ bool save_config(const Config &cfg, const std::string &path, std::string *err) {
   os << "[network]\n";
   os << "# Only log in when associated with this SSID. Leave empty to act on any network.\n";
   os << "ssid = " << cfg.ssid << "\n";
-  os << "interface = " << cfg.interface << "\n\n";
+  os << "interface = " << cfg.interface << "\n";
+  os << "# Nameserver for the portal's hostname when the system DNS cannot resolve it.\n";
+  os << "# Empty = use whatever this network hands out over DHCP.\n";
+  os << "dns_server = " << cfg.dns_server << "\n\n";
 
   os << "[account]\n";
   os << "username = " << cfg.username << "\n";

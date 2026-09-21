@@ -61,6 +61,23 @@ void Client::set_user_agent(const std::string &ua) { user_agent_ = ua; }
 void Client::set_interface(const std::string &iface) { interface_ = iface; }
 void Client::set_insecure(bool insecure) { insecure_ = insecure; }
 
+void Client::add_resolve(const std::string &host, const std::string &port,
+                         const std::string &address) {
+  std::string entry = host + ":" + port + ":" + address;
+  for (const std::string &existing : resolve_entries_) {
+    if (existing == entry) return;
+  }
+  resolve_entries_.push_back(entry);
+  log::debug("pinning " + entry);
+}
+
+bool Client::has_resolve_for(const std::string &host) const {
+  for (const std::string &entry : resolve_entries_) {
+    if (util::starts_with(entry, host + ":")) return true;
+  }
+  return false;
+}
+
 void Client::clear_cookies() {
   if (handle_) curl_easy_setopt(static_cast<CURL *>(handle_), CURLOPT_COOKIELIST, "ALL");
 }
@@ -116,6 +133,14 @@ Response Client::send(const Request &req) {
     curl_easy_setopt(curl, CURLOPT_REFERER, req.referer.c_str());
   }
 
+  // Re-applied on every request: curl_easy_reset() drops these along with
+  // everything else.
+  curl_slist *resolve_list = nullptr;
+  for (const std::string &entry : resolve_entries_) {
+    resolve_list = curl_slist_append(resolve_list, entry.c_str());
+  }
+  if (resolve_list) curl_easy_setopt(curl, CURLOPT_RESOLVE, resolve_list);
+
   curl_slist *headers = nullptr;
   if (util::iequals(req.method, "POST")) {
     curl_easy_setopt(curl, CURLOPT_POST, 1L);
@@ -137,6 +162,7 @@ Response Client::send(const Request &req) {
   log::debug(req.method + " " + req.url);
   CURLcode rc = curl_easy_perform(curl);
   if (headers) curl_slist_free_all(headers);
+  if (resolve_list) curl_slist_free_all(resolve_list);
 
   if (rc != CURLE_OK) {
     resp.ok = false;

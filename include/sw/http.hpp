@@ -49,10 +49,17 @@ public:
   void set_insecure(bool insecure);  // many campus portals use self-signed TLS
   void clear_cookies();
 
+  // Pins host:port to an address, bypassing the system resolver for that name
+  // (libcurl's CURLOPT_RESOLVE). Used when the portal's hostname only exists
+  // in the campus DNS that the system resolver has been configured to ignore.
+  void add_resolve(const std::string &host, const std::string &port, const std::string &address);
+  bool has_resolve_for(const std::string &host) const;
+
 private:
   void *handle_ = nullptr;  // CURL*
   std::string user_agent_;
   std::string interface_;
+  std::vector<std::string> resolve_entries_;  // "host:port:address"
   bool insecure_ = true;
 };
 

@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "sw/config.hpp"
+#include "sw/dns.hpp"
 #include "sw/html.hpp"
 #include "sw/http.hpp"
 #include "sw/keychain.hpp"
@@ -193,6 +194,11 @@ int cmd_login(const sw::Config &cfg) {
     return 0;
   }
   sw::log::error("login failed: " + res.message);
+  if (sw::dns::is_resolve_failure(res.message)) {
+    sw::log::info("the portal's hostname did not resolve, even via this network's DNS");
+    sw::log::info("  - check `schoolwifi diagnose` for the dns section");
+    sw::log::info("  - or set dns_server = <campus DNS> under [network] in the config");
+  }
   if (!res.posted_to.empty()) {
     sw::log::info("submitted " + res.method + " to " + res.posted_to);
     for (const auto &kv : res.sent_fields) {
@@ -325,6 +331,31 @@ int cmd_diagnose(const sw::Config &cfg) {
   std::printf("bssid     : %s\n", info.bssid.empty() ? "(unavailable)" : info.bssid.c_str());
   std::printf("ipv4      : %s\n", info.ipv4.empty() ? "(none)" : info.ipv4.c_str());
   std::printf("config    : %s\n", cfg.source_path.empty() ? "(defaults)" : cfg.source_path.c_str());
+
+  // A system resolver pinned to a public DNS cannot see a campus-only zone,
+  // which shows up much later as an inscrutable "could not resolve host".
+  // Surfacing it here turns that into a one-line explanation.
+  std::vector<std::string> sys_dns = sw::dns::system_nameservers();
+  std::vector<std::string> dhcp_dns = sw::dns::dhcp_nameservers(cfg.interface);
+  std::printf("\n== dns ==\n");
+  std::printf("system    : %s\n",
+              sys_dns.empty() ? "(unknown)" : sw::util::join(sys_dns, ", ").c_str());
+  std::printf("dhcp      : %s\n",
+              dhcp_dns.empty() ? "(none offered)" : sw::util::join(dhcp_dns, ", ").c_str());
+  if (!cfg.dns_server.empty()) std::printf("configured: %s\n", cfg.dns_server.c_str());
+
+  bool shares_server = false;
+  for (const std::string &a : sys_dns) {
+    for (const std::string &b : dhcp_dns) {
+      if (a == b) shares_server = true;
+    }
+  }
+  if (!sys_dns.empty() && !dhcp_dns.empty() && !shares_server) {
+    std::printf("note      : the system resolver ignores this network's DNS (manually pinned\n");
+    std::printf("            in System Settings). A portal hostname that exists only in the\n");
+    std::printf("            campus zone will not resolve; schoolwifi falls back to the DHCP\n");
+    std::printf("            server above automatically.\n");
+  }
 
   std::printf("\n== probe ==\n");
   sw::portal::Probe pr = sw::portal::probe(client, cfg);

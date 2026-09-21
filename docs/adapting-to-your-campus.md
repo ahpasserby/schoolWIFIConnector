@@ -118,6 +118,37 @@ failure_contains = 密码错误
 表单模式下会自动做 URL 编码，不用管。`raw` 模式下**必须**用
 `{password|url}` 而不是 `{password}`。
 
+### 7. `Could not resolve host`（门户域名解析不了）
+
+```
+== portal discovery ==
+  javascript redirect: https://w.bnbu.edu.cn/index_1.html
+  note: fetch failed: Could not resolve host: w.bnbu.edu.cn
+```
+
+门户域名通常只存在于校园内网 DNS。如果你在系统设置里写死了公共 DNS，
+它会跨所有网络生效，公网域名解析得了、内网域名解析不了。
+
+先看 `schoolwifi diagnose` 的 `== dns ==` 段：
+
+```
+== dns ==
+system    : 223.5.5.5        <- 系统实际在用的
+dhcp      : 10.253.0.1       <- 本网络下发的（校园 DNS）
+note      : the system resolver ignores this network's DNS ...
+```
+
+两行不一致就是这个问题。`schoolwifi` 会自动改用 `dhcp` 那台去解析门户域名，
+一般不用你做什么。自动回退也失败时，手工指定校园 DNS：
+
+```ini
+[network]
+dns_server = 10.253.0.1
+```
+
+校园 DNS 的地址从 `dhcp` 那一行抄；那行是空的话，用网关地址试试
+（`netstat -rn -f inet | awk '$1=="default"{print $2}'`）。
+
 ## 调试技巧
 
 ```bash

@@ -93,6 +93,14 @@ them away.
 - **`curl_easy_reset()` clears the cookie engine**, so `Client::send` re-sets
   `CURLOPT_COOKIEFILE ""` after every reset. Portals set a session cookie on
   the login page and require it on the POST — losing it breaks login silently.
+- **A campus portal's hostname often resolves only in the campus DNS**, and a
+  user who pinned a public resolver in System Settings keeps that setting on
+  every network — so the name simply does not exist to the system resolver,
+  while public names still resolve fine. `portal.cpp`'s `fetch()` therefore
+  retries any resolve failure by querying the DHCP-offered nameserver directly
+  (`dns.cpp`, libresolv with an explicit `nsaddr_list`) and pinning the answer
+  via `CURLOPT_RESOLVE`. That option, like the cookie engine, is dropped by
+  `curl_easy_reset()` and must be re-applied per request.
 - Only `wifi.mm` compiles as Objective-C++ (`-fobjc-arc`, set per-suffix rule
   in the Makefile). Keep ObjC out of the `.cpp` files.
 

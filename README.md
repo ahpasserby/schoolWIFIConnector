@@ -117,6 +117,7 @@ username = 20210001
 | --- | --- | --- |
 | `ssid` | 只在连接这个 WiFi 时才自动登录。留空 = 任何网络都尝试。**建议填上**，否则在家里的路由器上也会把校园网密码发出去 | 空 |
 | `interface` | 无线网卡名，Mac 上基本都是 `en0` | `en0` |
+| `dns_server` | 系统 DNS 解析不了门户域名时改用哪台 DNS。留空 = 自动用本网络 DHCP 下发的那台（通常就是校园 DNS） | 空 |
 
 #### `[account]` —— 用哪个账号
 
@@ -176,6 +177,49 @@ schoolwifi install-agent    # 会先卸载再重新加载，改完配置跑这�
 ```
 
 没装后台守护的话，改完直接跑 `schoolwifi login` 即可。
+
+## 常见问题
+
+### `Could not resolve host: xxx.edu.cn`
+
+门户的域名往往**只存在于校园内网 DNS**。如果你在「系统设置 → 网络 → DNS」里
+手工写死了公共 DNS（比如 `223.5.5.5`、`8.8.8.8`），这个设置会跨所有网络生效，
+于是在校园网里：
+
+- `captive.apple.com` 这种公网域名 → 解析得了，所以能探测到被拦截
+- `w.xxx.edu.cn` 这种内网域名 → 公共 DNS 不认识 → 解析失败，拿不到登录页
+
+`schoolwifi` 会自动处理这种情况：解析失败时，它会改用**本网络 DHCP 下发的
+DNS**（也就是校园 DNS）去解析门户域名，然后把结果直接钉给该次连接，
+不需要你改系统设置。
+
+用 `schoolwifi diagnose` 可以看到这个冲突：
+
+```
+== dns ==
+system    : 223.5.5.5
+dhcp      : 10.253.0.1
+note      : the system resolver ignores this network's DNS (manually pinned
+            in System Settings). ...
+```
+
+如果自动回退也失败（比如校园 DNS 不在 DHCP 里下发），手工指定：
+
+```ini
+[network]
+dns_server = 10.253.0.1
+```
+
+实在不行，把 Wi-Fi 的手工 DNS 去掉，恢复成用 DHCP 下发的：
+
+```bash
+sudo networksetup -setdnsservers Wi-Fi Empty
+```
+
+### 门户页面能打开，但登录没反应
+
+先跑 `schoolwifi diagnose` 看 `== forms ==` 段有没有识别到表单，
+再按 [docs/adapting-to-your-campus.md](docs/adapting-to-your-campus.md) 调 `[portal]`。
 
 ## 它是怎么工作的
 

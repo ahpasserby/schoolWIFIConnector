@@ -11,6 +11,8 @@
 #include <vector>
 
 #include "sw/config.hpp"
+#include "sw/dns.hpp"
+#include "sw/http.hpp"
 #include "sw/html.hpp"
 #include "sw/portal.hpp"
 #include "sw/util.hpp"
@@ -286,6 +288,112 @@ void test_plan_failure_is_reported() {
   check(!plan.reason.empty(), "failure carries an explanation");
 }
 
+void test_url_parsing() {
+  section("util::parse_url");
+  using sw::util::parse_url;
+
+  sw::util::UrlParts p = parse_url("https://w.bnbu.edu.cn/index_1.html");
+  check_eq(p.scheme, "https", "scheme");
+  check_eq(p.host, "w.bnbu.edu.cn", "host");
+  check_eq(p.port, "443", "https default port");
+
+  p = parse_url("http://10.0.0.1:8080/portal?ip=1.2.3.4");
+  check_eq(p.host, "10.0.0.1", "host with explicit port");
+  check_eq(p.port, "8080", "explicit port");
+
+  p = parse_url("http://portal.cn");
+  check_eq(p.port, "80", "http default port");
+
+  p = parse_url("http://user:pw@portal.cn/x");
+  check_eq(p.host, "portal.cn", "userinfo stripped");
+
+  p = parse_url("http://[2001:db8::1]:8080/x");
+  check_eq(p.host, "2001:db8::1", "IPv6 literal unwrapped");
+  check_eq(p.port, "8080", "IPv6 port");
+
+  p = parse_url("portal.cn/login");
+  check_eq(p.scheme, "http", "scheme defaults to http");
+  check_eq(p.host, "portal.cn", "schemeless host");
+}
+
+void test_dhcp_nameserver_parsing() {
+  section("dns::parse_dhcp_nameservers");
+
+  // Real `ipconfig getpacket en0` shape.
+  const std::string multi = R"(
+op = BOOTREPLY
+yiaddr = 10.253.51.53
+domain_name_server (ip_mult): {10.253.0.1, 10.253.0.2}
+router (ip_mult): {10.253.51.1}
+)";
+  std::vector<std::string> servers = sw::dns::parse_dhcp_nameservers(multi);
+  check(servers.size() == 2, "two nameservers parsed");
+  if (servers.size() == 2) {
+    check_eq(servers[0], "10.253.0.1", "first nameserver");
+    check_eq(servers[1], "10.253.0.2", "second nameserver");
+  }
+
+  const std::string single = "domain_name_server (ip): 172.19.9.90\n";
+  servers = sw::dns::parse_dhcp_nameservers(single);
+  check(servers.size() == 1, "single-value form parsed");
+  if (!servers.empty()) check_eq(servers[0], "172.19.9.90", "single nameserver");
+
+  // domain_name is a different option and must not be mistaken for a server.
+  servers = sw::dns::parse_dhcp_nameservers("domain_name (string): bnbu.edu.cn\n");
+  check(servers.empty(), "domain_name is not a nameserver");
+
+  servers = sw::dns::parse_dhcp_nameservers("domain_name_server (ip_mult): {not-an-ip}\n");
+  check(servers.empty(), "non-IP values rejected");
+
+  check(sw::dns::parse_dhcp_nameservers("").empty(), "empty packet yields nothing");
+}
+
+void test_resolve_failure_detection() {
+  section("dns::is_resolve_failure");
+  check(sw::dns::is_resolve_failure("Could not resolve host: w.bnbu.edu.cn"),
+        "libcurl resolve error recognised");
+  check(sw::dns::is_resolve_failure("could not resolve host"), "case-insensitive");
+  check(!sw::dns::is_resolve_failure("Connection refused"), "connection error is not a resolve error");
+  check(!sw::dns::is_resolve_failure("SSL certificate problem"), "TLS error is not a resolve error");
+  check(!sw::dns::is_resolve_failure(""), "empty error is not a resolve error");
+}
+
+void test_host_pinning() {
+  section("http::Client host pinning (CURLOPT_RESOLVE)");
+  sw::http::Client client;
+
+  check(!client.has_resolve_for("portal.invalid"), "nothing pinned initially");
+  client.add_resolve("portal.invalid", "1", "127.0.0.1");
+  check(client.has_resolve_for("portal.invalid"), "pin recorded");
+  client.add_resolve("portal.invalid", "1", "127.0.0.1");
+  check(client.has_resolve_for("portal.invalid"), "duplicate pin is a no-op");
+
+  // The pin must survive curl_easy_reset(), which send() calls on every
+  // request. Port 1 is closed, so a working pin turns a resolve failure into a
+  // connection failure -- a different error class, which is the observable
+  // proof the option took effect.
+  sw::http::Client fresh;
+  sw::http::Response before =
+      fresh.get("http://schoolwifi-pin-check.invalid:1/", /*follow=*/false, 3);
+
+  if (before.ok || !sw::dns::is_resolve_failure(before.error)) {
+    std::printf("  SKIP  host pinning (a resolver answered for .invalid)\n");
+    return;
+  }
+  check(true, "unpinned .invalid host fails to resolve");
+
+  fresh.add_resolve("schoolwifi-pin-check.invalid", "1", "127.0.0.1");
+  sw::http::Response after =
+      fresh.get("http://schoolwifi-pin-check.invalid:1/", /*follow=*/false, 3);
+  check(!sw::dns::is_resolve_failure(after.error),
+        "pinned host gets past resolution (error was: " + after.error + ")");
+
+  // And again, proving the pin is re-applied rather than consumed once.
+  sw::http::Response again =
+      fresh.get("http://schoolwifi-pin-check.invalid:1/", /*follow=*/false, 3);
+  check(!sw::dns::is_resolve_failure(again.error), "pin survives a second request");
+}
+
 void test_form_encoding() {
   section("util::form_encode");
   sw::util::Pairs pairs = {{"user", "20210001"}, {"pwd", "p@ss word&x"}};
@@ -336,6 +444,10 @@ int main() {
   test_short_hints_do_not_overmatch();
   test_config_overrides();
   test_plan_failure_is_reported();
+  test_url_parsing();
+  test_dhcp_nameserver_parsing();
+  test_resolve_failure_detection();
+  test_host_pinning();
   test_form_encoding();
   test_config_roundtrip();
 

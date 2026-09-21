@@ -13,6 +13,9 @@ struct Config {
   // [network]
   std::string ssid;               // when set, login/watch only act on this SSID
   std::string interface = "en0";  // Wi-Fi interface to inspect and bind to
+  // Nameserver used when the system resolver cannot resolve the portal's
+  // hostname. Empty means "ask whatever this network offered over DHCP".
+  std::string dns_server;
 
   // [account]
   std::string username;

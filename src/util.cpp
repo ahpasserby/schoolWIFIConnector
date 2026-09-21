@@ -163,6 +163,46 @@ std::string url_origin(const std::string &url) {
   return slash == std::string::npos ? url : url.substr(0, slash);
 }
 
+UrlParts parse_url(const std::string &url) {
+  UrlParts parts;
+  std::string rest = url;
+
+  std::size_t scheme_end = rest.find("://");
+  if (scheme_end != std::string::npos) {
+    parts.scheme = lower(rest.substr(0, scheme_end));
+    rest = rest.substr(scheme_end + 3);
+  } else {
+    parts.scheme = "http";
+  }
+
+  std::size_t authority_end = rest.find_first_of("/?#");
+  std::string authority =
+      authority_end == std::string::npos ? rest : rest.substr(0, authority_end);
+
+  std::size_t at = authority.rfind('@');  // drop any user:pass@
+  if (at != std::string::npos) authority = authority.substr(at + 1);
+
+  if (!authority.empty() && authority[0] == '[') {  // IPv6 literal
+    std::size_t close = authority.find(']');
+    if (close != std::string::npos) {
+      parts.host = authority.substr(1, close - 1);
+      std::size_t colon = authority.find(':', close);
+      if (colon != std::string::npos) parts.port = authority.substr(colon + 1);
+    }
+  } else {
+    std::size_t colon = authority.find(':');
+    if (colon == std::string::npos) {
+      parts.host = authority;
+    } else {
+      parts.host = authority.substr(0, colon);
+      parts.port = authority.substr(colon + 1);
+    }
+  }
+
+  if (parts.port.empty()) parts.port = parts.scheme == "https" ? "443" : "80";
+  return parts;
+}
+
 std::string resolve_url(const std::string &base, const std::string &ref) {
   std::string r = trim(ref);
   if (r.empty()) return base;

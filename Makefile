@@ -14,13 +14,15 @@ BUILD    ?= build
 CXXFLAGS ?= -std=c++17 -O2 -Wall -Wextra -Wpedantic
 CXXFLAGS += -Iinclude
 LDFLAGS  += -lcurl \
+            -lresolv \
             -framework CoreWLAN \
             -framework Foundation \
             -framework CoreFoundation \
             -framework Security
 
 CXX_SOURCES := src/main.cpp src/util.cpp src/log.cpp src/config.cpp \
-               src/http.cpp src/html.cpp src/portal.cpp src/keychain.cpp
+               src/http.cpp src/html.cpp src/portal.cpp src/keychain.cpp \
+               src/dns.cpp
 MM_SOURCES  := src/wifi.mm
 
 # Sources shared with the test binary (everything except main.cpp).

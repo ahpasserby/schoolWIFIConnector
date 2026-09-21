@@ -26,6 +26,13 @@ std::string html_unescape(const std::string &s);
 std::string resolve_url(const std::string &base, const std::string &ref);
 std::string url_origin(const std::string &url);
 
+struct UrlParts {
+  std::string scheme;  // lowercased, defaults to "http"
+  std::string host;    // no userinfo, no brackets for IPv6
+  std::string port;    // explicit port, or the scheme's default
+};
+UrlParts parse_url(const std::string &url);
+
 using Pairs = std::vector<std::pair<std::string, std::string>>;
 std::string form_encode(const Pairs &pairs);
 
