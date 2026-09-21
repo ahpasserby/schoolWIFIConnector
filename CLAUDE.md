@@ -187,6 +187,11 @@ them away.
   `wifi::interfaces()`: a bad value there fails much later with an error that
   looks nothing like the typo that caused it.
 
+`diagnose`'s "what login would submit" section must mirror the branch `login`
+actually takes. Running `plan_form_login` unconditionally reported a failure
+for Srun and BYOD pages that `login` handles perfectly well through an API,
+which reads as a problem that is not there.
+
 Portals whose page carries no form and no redirect hint keep their logic in
 JavaScript, which this tool cannot execute. `diagnose` therefore saves
 `schoolwifi-diagnose-<ts>/` containing the page plus every **same-origin**

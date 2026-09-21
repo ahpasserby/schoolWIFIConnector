@@ -139,6 +139,9 @@ out="$(cd "$WORK" && "$BIN" --config "$SRUN_CONFIG" diagnose 2>&1)"
 grep -q "javascript redirect" <<<"$out" && ok "follows the injected JS redirect" || bad "follows the injected JS redirect"
 grep -q "srun_portal_pc" <<<"$out" && ok "reaches the srun SPA" || bad "reaches the srun SPA"
 grep -q "(none found)" <<<"$out" && ok "correctly finds no HTML form" || bad "correctly finds no HTML form"
+grep -q "has no HTML form at all; that is expected" <<<"$out" \
+  && ok "diagnose says srun needs no form rather than reporting a failure" \
+  || bad "diagnose says srun needs no form rather than reporting a failure"
 
 # A portal with no form keeps its logic in JS, so diagnose must save that JS.
 dump=$(ls -dt "$WORK"/schoolwifi-diagnose-* 2>/dev/null | head -1)
@@ -271,6 +274,9 @@ rm -rf "$WORK"/schoolwifi-diagnose-*
 dump=$(ls -dt "$WORK"/schoolwifi-diagnose-* 2>/dev/null | head -1)
 if [[ -n "$dump" && -f "$dump/byod-init.json" ]] && grep -q '"url"' "$dump/byod-init.json"; then
   ok "diagnose captured the byod init response"
+  grep -q "JSON, not the form" "$WORK/byod-diag.log" \
+    && ok "diagnose reports the API path, not a form-planning failure" \
+    || bad "diagnose reports the API path, not a form-planning failure"
 else
   bad "diagnose captured the byod init response"
 fi

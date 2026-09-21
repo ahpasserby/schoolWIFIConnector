@@ -19,6 +19,7 @@
 #include "sw/log.hpp"
 #include "sw/netenv.hpp"
 #include "sw/portal.hpp"
+#include "sw/srun.hpp"
 #include "sw/util.hpp"
 #include "sw/wifi.hpp"
 
@@ -468,6 +469,35 @@ int cmd_diagnose(const sw::Config &cfg) {
   }
 
   std::printf("\n== what login would submit ==\n");
+
+  // Mirror the decision `login` makes. Running the form planner here regardless
+  // reported a failure for pages that login handles perfectly well through an
+  // API, which reads as a problem that is not there.
+  std::string origin = sw::util::url_origin(page.url);
+  if (sw::byod::looks_like_login_page(page.url, page.html)) {
+    std::printf("  POST %s/byod/byodrs/login/defaultLogin   (JSON, not the form)\n",
+                origin.c_str());
+    std::printf("      userName        = %s\n",
+                cfg.username.empty() ? "<username>" : cfg.username.c_str());
+    std::printf("      userPassword    = (the password, base64-encoded)\n");
+    std::printf("      serviceSuffixId = %s\n",
+                cfg.service_suffix_id.empty() ? "(the portal's default, see above)"
+                                              : cfg.service_suffix_id.c_str());
+    std::printf("      licenseCode, userGroupId, validationType, guestManagerId\n");
+    std::printf("                      = copied verbatim from byodrs/login/init\n");
+    std::printf("      shopIdE, wlannasid\n");
+    std::printf("                      = copied from byodrs/init\n");
+    std::printf("  The page's <form> is a decoy: its inputs are hidden and never submitted.\n");
+  } else if (sw::srun::looks_like_srun(page.url, page.html)) {
+    sw::srun::PortalInfo srun_info = sw::srun::parse_portal_info(page.url, page.html);
+    std::printf("  GET %s/cgi-bin/get_challenge   then\n", srun_info.origin.c_str());
+    std::printf("  GET %s/cgi-bin/srun_portal?action=login\n", srun_info.origin.c_str());
+    std::printf("      username = %s\n",
+                cfg.username.empty() ? "<username>" : cfg.username.c_str());
+    std::printf("      ac_id    = %s\n", srun_info.ac_id.c_str());
+    std::printf("      password / info / chksum are derived from the challenge.\n");
+    std::printf("  This portal has no HTML form at all; that is expected.\n");
+  } else {
   sw::portal::FormPlan plan =
       sw::portal::plan_form_login(cfg, page, cfg.username.empty() ? "<username>" : cfg.username,
                                   "<password>");
@@ -481,6 +511,7 @@ int cmd_diagnose(const sw::Config &cfg) {
       std::printf("      %-24s = %s\n", kv.first.c_str(),
                   kv.first == plan.password_field ? "********" : kv.second.c_str());
     }
+  }
   }
 
   if (page.html.empty()) return 0;
@@ -511,7 +542,6 @@ int cmd_diagnose(const sw::Config &cfg) {
     }
   }
 
-  std::string origin = sw::util::url_origin(page.url);
   int index = 0;
   for (const std::string &src : sw::html::script_srcs(page.html)) {
     std::string url = sw::util::resolve_url(page.url, src);
