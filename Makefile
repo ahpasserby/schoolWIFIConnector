@@ -22,7 +22,7 @@ LDFLAGS  += -lcurl \
 
 CXX_SOURCES := src/main.cpp src/util.cpp src/log.cpp src/config.cpp \
                src/http.cpp src/html.cpp src/portal.cpp src/keychain.cpp \
-               src/dns.cpp
+               src/dns.cpp src/netenv.cpp src/srun.cpp
 MM_SOURCES  := src/wifi.mm
 
 # Sources shared with the test binary (everything except main.cpp).

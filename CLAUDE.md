@@ -44,7 +44,9 @@ portals:
 ```
 main.cpp        subcommand dispatch, password resolution, LaunchAgent plist
   portal.cpp    THE STATE MACHINE: probe -> resolve page -> plan -> submit -> verify
+    srun.cpp    Srun (深澜) portals: challenge/response login, no HTML form
     html.cpp    forgiving <form>/<input> scanner + redirect-hint extraction
+    netenv.cpp  proxy / VPN-tunnel detection for diagnostics
     http.cpp    libcurl session (cookies persist across requests in a Client)
     config.cpp  INI parsing; every field has a working default
     wifi.mm     CoreWLAN bridge (the only Objective-C++ file)
@@ -101,6 +103,11 @@ them away.
   (`dns.cpp`, libresolv with an explicit `nsaddr_list`) and pinning the answer
   via `CURLOPT_RESOLVE`. That option, like the cookie engine, is dropped by
   `curl_easy_reset()` and must be re-applied per request.
+- A 200 response does not mean online. Portals frequently intercept without
+  redirecting, answering 200 with a splash page — this is what BNBU does. For
+  probe URLs with a known success payload the marker settles it; for any other
+  URL, `probe()` treats a redirect hint in the body as proof of substitution,
+  because a genuine connectivity check never carries one.
 - Only `wifi.mm` compiles as Objective-C++ (`-fobjc-arc`, set per-suffix rule
   in the Makefile). Keep ObjC out of the `.cpp` files.
 

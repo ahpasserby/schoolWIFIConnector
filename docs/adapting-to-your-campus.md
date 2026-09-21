@@ -78,10 +78,39 @@ field.operator = telecom
 login_url = http://10.0.0.1/portal/login.jsp
 ```
 
-### 4. 门户根本没有表单，是个 JS 调的 API
+### 4. 门户根本没有表单（深澜 Srun）
 
-有些认证系统（比如深澜 Srun）不走表单，而是前端用 JS 算好参数直接打 API。
-这种情况用 `raw` 模式，把请求原样重放：
+`== forms ==` 显示 `(none found)`，`page title` 是 `Srunsoft`，
+地址里带 `srun_portal`：
+
+```
+login page: https://w.example.edu.cn/srun_portal_pc?ac_id=1&theme=pro
+page title: Srunsoft
+
+== forms ==
+  (none found)
+```
+
+**这种已经内置支持了，不用配置。** 深澜门户是纯 JS 单页应用，页面上的
+`<input>` 只有 `id` 没有 `name`，也没有 `<form>` 标签 —— 所以扫不到表单是正常的，
+不是 bug。登录参数要用服务端下发的 challenge 现算（XXTEA 加密 + 自定义 base64
++ HMAC-MD5 + SHA1 签名），`schoolwifi` 会自动识别并走这条路径。
+
+如果自动识别没生效，强制指定：
+
+```ini
+[portal]
+login_method = srun
+login_url = https://w.example.edu.cn/srun_portal_pc?ac_id=1
+```
+
+`ac_id` 一般能从页面里的 `var CONFIG = { acid : "1", ... }` 读到，读不到默认用 `1`。
+
+> 开了图形验证码的深澜门户目前不支持。
+
+### 4b. 其它 API 式门户
+
+不是深澜、但同样没有表单、直接调接口的，用 `raw` 模式把请求原样重放：
 
 ```ini
 [portal]
@@ -98,8 +127,7 @@ post_body = user_account={username|url}&user_password={password|url}&wlan_user_i
 开开发者工具的 Network 面板，找到登录那个请求，看它的 URL 和 Request Payload，
 照着填 `login_url` 和 `post_body` 即可。
 
-> 注意：如果这个 API 的参数里有 JS 现算的哈希/加密串（Srun 的 `chksum`、
-> `info` 就是），`raw` 模式重放固定值是不行的。这类门户目前不支持，
+> 注意：如果这个 API 的参数里有 JS 现算的哈希/加密串，`raw` 模式重放固定值是不行的。
 > 欢迎提 issue 带上（脱敏后的）请求样本。
 
 ### 5. 登录了但判定成失败

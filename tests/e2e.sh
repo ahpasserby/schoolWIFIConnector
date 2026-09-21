@@ -100,6 +100,70 @@ else
   bad "wrong password is reported as a failure -- $(cat "$WORK/bad.log")"
 fi
 
+kill "$PORTAL_PID" 2>/dev/null
+wait "$PORTAL_PID" 2>/dev/null
+
+# ---------------------------------------------------------------------------
+# Srun (深澜) portal: no HTML form at all. The server validates the challenge
+# signature, so these checks only pass if the whole crypto chain is right.
+# ---------------------------------------------------------------------------
+echo ""
+echo "e2e: srun portal login"
+
+SRUN_PORT=$((PORT + 1))
+python3 "$ROOT/tests/fake_portal.py" --port "$SRUN_PORT" --mode srun 2>"$WORK/srun.log" &
+PORTAL_PID=$!
+for _ in $(seq 1 50); do
+  curl -s -o /dev/null "http://127.0.0.1:$SRUN_PORT/srun_portal_pc" && break
+  sleep 0.1
+done
+
+SRUN_CONFIG="$WORK/srun.ini"
+cat > "$SRUN_CONFIG" <<INI
+[network]
+ssid =
+interface =
+
+[account]
+username = 20210001
+
+[portal]
+probe_urls = http://127.0.0.1:$SRUN_PORT/probe
+
+[watch]
+online_interval = 1
+captive_interval = 1
+INI
+
+out="$("$BIN" --config "$SRUN_CONFIG" diagnose 2>&1)"
+grep -q "javascript redirect" <<<"$out" && ok "follows the injected JS redirect" || bad "follows the injected JS redirect"
+grep -q "srun_portal_pc" <<<"$out" && ok "reaches the srun SPA" || bad "reaches the srun SPA"
+grep -q "(none found)" <<<"$out" && ok "correctly finds no HTML form" || bad "correctly finds no HTML form"
+rm -f "$ROOT"/schoolwifi-portal-*.html
+
+if "$BIN" --config "$SRUN_CONFIG" login >"$WORK/srun-login.log" 2>&1; then
+  ok "srun login succeeds"
+else
+  bad "srun login succeeds -- $(cat "$WORK/srun-login.log")"
+fi
+grep -q "detected a Srun portal" "$WORK/srun-login.log" && ok "srun portal auto-detected" \
+  || bad "srun portal auto-detected"
+grep -q "REJECT" "$WORK/srun.log" \
+  && bad "server rejected a derived parameter: $(grep -o 'REJECT.*' "$WORK/srun.log" | head -1)" \
+  || ok "server accepted chksum, info blob and hmd5"
+
+out="$("$BIN" --config "$SRUN_CONFIG" status 2>&1)"
+grep -q "Portal       online" <<<"$out" && ok "online after srun login" || bad "online after srun login"
+
+curl -s -o /dev/null "http://127.0.0.1:$SRUN_PORT/cgi-bin/srun_portal?action=logout"
+SCHOOLWIFI_PASSWORD='wrong-password' "$BIN" --config "$SRUN_CONFIG" login >"$WORK/srun-bad.log" 2>&1
+if grep -q "password is incorrect" "$WORK/srun-bad.log" \
+   && grep -q "REJECT bad-password" "$WORK/srun.log"; then
+  ok "wrong password surfaces the portal's own error"
+else
+  bad "wrong password surfaces the portal's own error -- $(cat "$WORK/srun-bad.log")"
+fi
+
 echo ""
 echo "$((pass + fail)) checks, $fail failures"
 [[ $fail -eq 0 ]]

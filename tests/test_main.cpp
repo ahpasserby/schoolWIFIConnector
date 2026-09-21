@@ -14,7 +14,9 @@
 #include "sw/dns.hpp"
 #include "sw/http.hpp"
 #include "sw/html.hpp"
+#include "sw/netenv.hpp"
 #include "sw/portal.hpp"
+#include "sw/srun.hpp"
 #include "sw/util.hpp"
 
 namespace {
@@ -394,6 +396,158 @@ void test_host_pinning() {
   check(!sw::dns::is_resolve_failure(again.error), "pin survives a second request");
 }
 
+void test_srun_primitives() {
+  section("srun primitives (vectors from tests/srun_reference.py)");
+
+  check_eq(sw::srun::base64("hello"), "OCubWC4=", "base64, no padding remainder");
+  check_eq(sw::srun::base64("hi"), "OCY=", "base64, two-byte tail");
+  check_eq(sw::srun::base64("a"), "Z+==", "base64, one-byte tail");
+  check_eq(sw::srun::base64(""), "", "base64 of empty string");
+
+  // x_encode output is binary; compare as hex.
+  std::string encoded = sw::srun::x_encode("hello world", "key");
+  std::string hex;
+  static const char *digits = "0123456789abcdef";
+  for (unsigned char c : encoded) {
+    hex += digits[c >> 4];
+    hex += digits[c & 0x0F];
+  }
+  check_eq(hex, "cfb3875b982e9a84704b25c10a02b24a", "x_encode matches the reference");
+  check_eq(sw::srun::x_encode("", "key"), "", "x_encode of empty string");
+
+  check_eq(sw::srun::sha1_hex("abc"), "a9993e364706816aba3e25717850c26c9cd0d89d",
+           "sha1 known vector");
+  check_eq(sw::srun::hmac_md5_hex("key", "The quick brown fox jumps over the lazy dog"),
+           "80070713463e7749b90c2dc24911e275", "hmac-md5 known vector");
+}
+
+void test_srun_login_payload() {
+  section("srun login payload (vectors from tests/srun_reference.py)");
+
+  const std::string token = "abcdef0123456789abcdef0123456789";
+  const std::string username = "20210001";
+  const std::string password = "s3cr3t p@ss";
+  const std::string ip = "10.253.51.53";
+  const std::string acid = "1";
+
+  std::string info_json = sw::srun::build_info_json(username, password, ip, acid);
+  check_eq(info_json,
+           "{\"username\":\"20210001\",\"password\":\"s3cr3t p@ss\",\"ip\":\"10.253.51.53\""
+           ",\"acid\":\"1\",\"enc_ver\":\"srun_bx1\"}",
+           "info json matches JSON.stringify output");
+
+  std::string info_param = sw::srun::build_info_param(info_json, token);
+  check_eq(info_param,
+           "{SRBX1}KE+cQm21RKCvcjkwbJmyVC0YyVm1VNMgQBH0hg7xWUIUiQQiukXxt74rwb8048xT/F5j8PCbSK00"
+           "RqzcZRJNiARROXq5cgaA9YYeL+NDDwmBHAQqTByE+77vmyi5A8jJ2K7ci5XCQNH=",
+           "encrypted info parameter matches the reference");
+
+  std::string hmd5 = sw::srun::hmac_md5_hex(token, password);
+  check_eq(hmd5, "c24de49827c7eee8669b2a835bada096", "hmd5 matches the reference");
+
+  check_eq(sw::srun::build_chksum(token, username, hmd5, acid, ip, "200", "1", info_param),
+           "78cf715df033dd66fe48b9e8ae70a998a9229550", "chksum matches the reference");
+}
+
+void test_srun_response_parsing() {
+  section("srun response parsing");
+
+  const std::string jsonp =
+      "jQuery_1758441234({\"challenge\":\"abc123\",\"client_ip\":\"10.253.51.53\","
+      "\"online_ip\":\"10.253.51.53\",\"ecode\":0,\"error\":\"ok\"})";
+  std::string body = sw::srun::strip_jsonp(jsonp);
+  check_eq(sw::srun::json_field(body, "challenge"), "abc123", "challenge extracted");
+  check_eq(sw::srun::json_field(body, "online_ip"), "10.253.51.53", "online_ip extracted");
+  check_eq(sw::srun::json_field(body, "ecode"), "0", "numeric field extracted");
+  check_eq(sw::srun::json_field(body, "error"), "ok", "error extracted");
+  check_eq(sw::srun::json_field(body, "missing"), "", "absent field yields empty");
+
+  // A bare JSON body (no callback wrapper) must survive strip_jsonp.
+  check_eq(sw::srun::json_field(sw::srun::strip_jsonp("{\"error\":\"ok\"}"), "error"), "ok",
+           "unwrapped JSON still parses");
+}
+
+void test_srun_portal_detection() {
+  section("srun detection against the real BNBU portal page");
+
+  // Trimmed from a live capture: the inline CONFIG block is how the portal
+  // tells its own JavaScript which acid and client IP to use.
+  const std::string html = R"HTML(<!DOCTYPE html><html><head>
+<meta name="keywords" content="Srunsoft">
+<title>Srunsoft</title>
+<script src="./static/themes/pro/js/redirect.js?v=17bc0ca727628ae0"></script>
+</head><body>
+<div class="panel-row"><input type="text" id="username" class="input-box"></div>
+<div class="panel-row"><input type="password" id="password" class="input-box"></div>
+<script>
+    var CONFIG = {
+        page   : 'account',
+        acid   : "1",
+        ip     : "10.253.51.53",
+        nas    : "",
+        isIPV6 :  false ,
+        portal : {"AuthIP":"","ServiceIP":"https://218.75.75.93:8800","MacAuth":true}
+    };
+</script>
+</body></html>)HTML";
+
+  const std::string url = "https://w.bnbu.edu.cn/srun_portal_pc?ac_id=1&theme=pro";
+
+  check(sw::srun::looks_like_srun(url, html), "recognised as a Srun portal");
+  check(!sw::srun::looks_like_srun("http://10.0.0.1/login.jsp", "<form><input name=u></form>"),
+        "an ordinary form portal is not mistaken for Srun");
+
+  sw::srun::PortalInfo info = sw::srun::parse_portal_info(url, html);
+  check(info.ok, "portal info parsed");
+  check_eq(info.origin, "https://w.bnbu.edu.cn", "origin derived from the page URL");
+  check_eq(info.ac_id, "1", "acid read from CONFIG");
+  check_eq(info.client_ip, "10.253.51.53", "client ip read from CONFIG (not AuthIP/isIPV6)");
+
+  // The page has inputs but no <form> and no name attributes, which is exactly
+  // why the generic form path cannot handle it.
+  sw::portal::LoginPage page;
+  page.url = url;
+  page.html = html;
+  sw::Config cfg;
+  check(!sw::portal::plan_form_login(cfg, page, "u", "p").ok,
+        "the generic form planner correctly gives up on this page");
+
+  // ac_id must still be found when CONFIG is absent but the URL carries it.
+  sw::srun::PortalInfo from_url = sw::srun::parse_portal_info(url, "<html>Srunsoft</html>");
+  check_eq(from_url.ac_id, "1", "acid falls back to the URL query");
+}
+
+void test_netenv_parsing() {
+  section("netenv parsing");
+
+  const std::string routes =
+      "Routing tables\n\nInternet:\n"
+      "Destination        Gateway            Flags        Netif Expire\n"
+      "default            172.19.9.90        UGScg          en0\n"
+      "127                127.0.0.1          UCS            lo0\n";
+  check_eq(sw::netenv::parse_default_route_interface(routes), "en0", "default route interface");
+
+  const std::string tunnelled =
+      "Destination        Gateway            Flags        Netif\n"
+      "default            link#22            UCSg         utun4\n";
+  check_eq(sw::netenv::parse_default_route_interface(tunnelled), "utun4",
+           "tunnelled default route");
+  check_eq(sw::netenv::parse_default_route_interface("no routes here"), "",
+           "missing default route");
+
+  check(sw::netenv::is_tunnel_interface("utun3"), "utun is a tunnel");
+  check(sw::netenv::is_tunnel_interface("ipsec0"), "ipsec is a tunnel");
+  check(!sw::netenv::is_tunnel_interface("en0"), "en0 is not a tunnel");
+  check(!sw::netenv::is_tunnel_interface("lo0"), "lo0 is not a tunnel");
+
+  const std::string proxy =
+      "<dictionary> {\n  HTTPEnable : 1\n  HTTPPort : 7897\n  HTTPProxy : 127.0.0.1\n"
+      "  HTTPSEnable : 0\n  SOCKSEnable : 0\n}\n";
+  check_eq(sw::netenv::parse_system_proxy(proxy), "HTTP 127.0.0.1:7897", "http proxy detected");
+  check_eq(sw::netenv::parse_system_proxy("<dictionary> {\n  HTTPEnable : 0\n}\n"), "",
+           "disabled proxy not reported");
+}
+
 void test_form_encoding() {
   section("util::form_encode");
   sw::util::Pairs pairs = {{"user", "20210001"}, {"pwd", "p@ss word&x"}};
@@ -448,6 +602,11 @@ int main() {
   test_dhcp_nameserver_parsing();
   test_resolve_failure_detection();
   test_host_pinning();
+  test_srun_primitives();
+  test_srun_login_payload();
+  test_srun_response_parsing();
+  test_srun_portal_detection();
+  test_netenv_parsing();
   test_form_encoding();
   test_config_roundtrip();
 

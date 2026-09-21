@@ -7,6 +7,7 @@
 #include "sw/dns.hpp"
 #include "sw/html.hpp"
 #include "sw/log.hpp"
+#include "sw/srun.hpp"
 #include "sw/util.hpp"
 
 namespace sw::portal {
@@ -179,7 +180,13 @@ Probe probe(http::Client &client, const Config &cfg) {
       pr.state = State::Captive;
     } else if (resp.status == exp.status &&
                (exp.marker[0] == '\0' || util::icontains(resp.body, exp.marker))) {
-      pr.state = State::Online;
+      // For an endpoint with no known success payload, a 200 alone proves
+      // nothing: portals commonly intercept without redirecting, answering 200
+      // with a splash page. A genuine connectivity check never carries a
+      // redirect hint, so one here means the response was substituted.
+      bool substituted = exp.marker[0] == '\0' && (!html::meta_refresh_url(resp.body).empty() ||
+                                                   !html::js_redirect_url(resp.body).empty());
+      pr.state = substituted ? State::Captive : State::Online;
     } else {
       // A 200 that is not the expected payload means a transparent proxy
       // swapped the response for a splash page.
@@ -462,6 +469,36 @@ LoginResult login(http::Client &client, const Config &cfg, const std::string &pa
     return result;
   }
 
+  // Srun portals ship no <form> at all - the request is assembled in JS from a
+  // server-issued challenge - so they need their own path entirely.
+  if (cfg.login_method == "srun" || srun::looks_like_srun(page.url, page.html)) {
+    srun::PortalInfo portal_info = srun::parse_portal_info(page.url, page.html);
+    if (!portal_info.ok) {
+      result.message = "looks like a Srun portal, but " + portal_info.note;
+      return result;
+    }
+    log::info("detected a Srun portal at " + portal_info.origin);
+    if (!portal_info.note.empty()) log::warn("srun: " + portal_info.note);
+
+    LoginResult srun_result = srun::login(client, cfg, portal_info, password);
+    if (!srun_result.success) return srun_result;
+
+    // The portal saying "ok" is not proof the network came up; hold it to the
+    // same standard as every other login path.
+    for (int attempt = 1; attempt <= kVerifyAttempts; ++attempt) {
+      sleep_ms(kVerifyDelayMs);
+      if (probe(client, cfg).state == State::Online) {
+        srun_result.message += "; verified online";
+        return srun_result;
+      }
+      log::debug("srun verify attempt " + std::to_string(attempt) + ": not online yet");
+    }
+    srun_result.success = false;
+    srun_result.message = "srun accepted the login but connectivity never came up (" +
+                          srun_result.message + ")";
+    return srun_result;
+  }
+
   FormPlan plan = plan_form_login(cfg, page, cfg.username, password);
   if (!plan.ok) {
     result.message = plan.reason;
@@ -501,6 +538,18 @@ LoginResult login(http::Client &client, const Config &cfg, const std::string &pa
 
 LoginResult logout(http::Client &client, const Config &cfg) {
   LoginResult result;
+
+  // A Srun logout is a signed API call, not a URL to visit. It needs the
+  // portal's origin, which is only knowable from the config once we are
+  // online and the portal no longer intercepts anything.
+  if (cfg.logout_url.empty() && cfg.login_method == "srun" && !cfg.login_url.empty()) {
+    srun::PortalInfo portal_info;
+    portal_info.origin = util::url_origin(cfg.login_url);
+    portal_info.ac_id = "1";
+    portal_info.ok = !portal_info.origin.empty();
+    if (portal_info.ok) return srun::logout(client, cfg, portal_info);
+  }
+
   if (cfg.logout_url.empty()) {
     result.message = "no logout_url configured";
     return result;

@@ -142,7 +142,7 @@ SCHOOLWIFI_PASSWORD='xxx' schoolwifi -v login
 
 | 配置项 | 说明 | 默认 |
 | --- | --- | --- |
-| `login_method` | `form` = 自动找登录页解析表单提交；`raw` = 直接把 `post_body` 发给 `login_url`，用于没有表单、纯 JS 调 API 的门户 | `form` |
+| `login_method` | `form` = 自动找登录页解析表单提交（也会自动识别深澜 Srun 门户）；`srun` = 强制走深澜认证；`raw` = 直接把 `post_body` 发给 `login_url` | `form` |
 | `login_url` | 登录页地址。留空 = 自动探测。自动探测不到时，填 diagnose 输出里 `login page:` 那一行 | 空 |
 | `logout_url` | 注销地址，`schoolwifi logout` 用。支持 `{username}` 占位符 | 空 |
 | `username_field` | 账号输入框的 `name`。留空 = 自动识别 | 空 |
@@ -177,6 +177,34 @@ schoolwifi install-agent    # 会先卸载再重新加载，改完配置跑这�
 ```
 
 没装后台守护的话，改完直接跑 `schoolwifi login` 即可。
+
+## 支持的门户类型
+
+| 类型 | 说明 | 需要配置吗 |
+| --- | --- | --- |
+| 普通 HTML 表单 | 自动找到登录页、识别账号/密码输入框、保留 hidden 字段后提交 | 一般不用 |
+| **深澜 Srun** | 纯 JS 单页应用，**没有 HTML 表单**。登录参数要用服务端下发的 challenge 现算：XXTEA 加密 + 自定义 base64 + HMAC-MD5 + SHA1 签名。已内置实现，自动识别 | 一般不用 |
+| API 式门户 | 没有表单、直接调接口的，用 `login_method = raw` 把请求重放一遍 | 要填 `login_url` + `post_body` |
+
+深澜门户的识别是自动的（看页面里的 `Srunsoft` / `srun_bx1` / `srun_portal` 特征）。
+识别到之后日志里会有一行：
+
+```
+INFO  detected a Srun portal at https://w.example.edu.cn
+INFO  srun: challenge obtained, submitting login for 20210001 (ip 10.x.x.x, acid 1)
+INFO  connected: srun: login_ok; verified online
+```
+
+自动识别没生效的话，可以强制指定：
+
+```ini
+[portal]
+login_method = srun
+login_url = https://w.example.edu.cn/srun_portal_pc?ac_id=1
+```
+
+> 已知限制：如果你们学校的深澜门户开了**图形验证码**，目前不支持，
+> 只能用 `schoolwifi open` 手动登录。
 
 ## 常见问题
 

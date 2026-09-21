@@ -15,6 +15,7 @@
 #include "sw/http.hpp"
 #include "sw/keychain.hpp"
 #include "sw/log.hpp"
+#include "sw/netenv.hpp"
 #include "sw/portal.hpp"
 #include "sw/util.hpp"
 #include "sw/wifi.hpp"
@@ -355,6 +356,33 @@ int cmd_diagnose(const sw::Config &cfg) {
     std::printf("            in System Settings). A portal hostname that exists only in the\n");
     std::printf("            campus zone will not resolve; schoolwifi falls back to the DHCP\n");
     std::printf("            server above automatically.\n");
+  }
+
+  // A proxy or tunnel is the other classic reason authentication "just fails":
+  // schoolwifi bypasses them for its own requests, but the browser behind
+  // `schoolwifi open` does not, and a tunnel owning the default route defeats
+  // everything.
+  sw::netenv::Interference net = sw::netenv::detect();
+  std::printf("\n== interference ==\n");
+  std::printf("default route : %s%s\n",
+              net.default_route_interface.empty() ? "(unknown)"
+                                                  : net.default_route_interface.c_str(),
+              net.tunnelled_default_route ? "   <- a tunnel owns the default route" : "");
+  std::printf("system proxy  : %s\n",
+              net.system_proxy ? net.system_proxy_detail.c_str() : "(none)");
+  std::printf("env proxy     : %s\n",
+              net.env_proxy ? net.env_proxy_detail.c_str() : "(none)");
+  if (!net.tunnel_interfaces.empty()) {
+    std::printf("tunnel ifaces : %s\n", sw::util::join(net.tunnel_interfaces, ", ").c_str());
+  }
+  if (net.tunnelled_default_route) {
+    std::printf("note          : all traffic is going through a tunnel. Captive-portal\n");
+    std::printf("                authentication cannot work this way -- turn the VPN or the\n");
+    std::printf("                proxy's TUN mode off until you are logged in.\n");
+  } else if (net.system_proxy || net.env_proxy) {
+    std::printf("note          : schoolwifi bypasses these for its own requests, but your\n");
+    std::printf("                browser does not -- `schoolwifi open` may fail to load the\n");
+    std::printf("                portal while the proxy is on.\n");
   }
 
   std::printf("\n== probe ==\n");
