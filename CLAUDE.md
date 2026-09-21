@@ -156,6 +156,10 @@ them away.
   would otherwise claim fields named `validcode` or `pwdTip`. There are
   regression tests for exactly this; keep them passing when editing the lists.
 - When detection is ambiguous, `plan_form_login` returns `ok = false` with a
+  `reason` that **names every field on the form**, and says which side it did
+  recognise. A count alone ("found 3 fields") costs the user another run on a
+  network they may have had to walk to.
+- When detection is ambiguous, `plan_form_login` returns `ok = false` with a
   `reason` instead of guessing. Submitting a password into the wrong input is
   worse than failing with a message pointing at `schoolwifi diagnose`.
 - Passwords are masked (`kMaskedPassword`) before being recorded in

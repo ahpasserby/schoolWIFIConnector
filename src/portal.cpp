@@ -478,9 +478,24 @@ FormPlan plan_form_login(const Config &cfg, const LoginPage &page, const std::st
   }
 
   if (plan.username_field.empty() || plan.password_field.empty()) {
-    plan.reason = "could not identify the username/password inputs (found " +
-                  std::to_string(chosen->fields.size()) +
-                  " fields); set username_field / password_field in the config";
+    // Name the fields. Saying only how many there were forces a second
+    // command on a network the user may have to walk back to.
+    std::string listing;
+    for (const html::Field &f : chosen->fields) {
+      if (!listing.empty()) listing += ", ";
+      listing += f.name;
+      if (!f.type.empty()) listing += "[" + f.type + "]";
+    }
+    if (listing.empty()) listing = "(none)";
+
+    plan.reason = "could not tell which input is the username and which is the password. "
+                  "The form has: " +
+                  listing + ". Set username_field / password_field in [portal] to two of these";
+    if (!plan.username_field.empty()) {
+      plan.reason += " (username_field = " + plan.username_field + " was recognised)";
+    } else if (!plan.password_field.empty()) {
+      plan.reason += " (password_field = " + plan.password_field + " was recognised)";
+    }
     return plan;
   }
 

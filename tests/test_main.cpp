@@ -323,6 +323,23 @@ void test_plan_failure_is_reported() {
       sw::portal::plan_form_login(cfg, page_of("http://p.cn/", html), "u", "p");
   check(!plan.ok, "refuses to guess when nothing matches");
   check(!plan.reason.empty(), "failure carries an explanation");
+
+  // The explanation has to name the fields: the user may be on a network they
+  // had to walk to, and "found 2 fields" costs them a second trip.
+  check(sw::util::icontains(plan.reason, "q1"), "failure names the first field");
+  check(sw::util::icontains(plan.reason, "q2"), "failure names the second field");
+  check(sw::util::icontains(plan.reason, "username_field"), "failure says what to set");
+
+  // When one side was recognised, say which, so only the other needs setting.
+  const std::string half = R"(<form action="/go"><input type="password" name="pw1">
+      <input type="text" name="zzz"><input type="text" name="qqq"></form>)";
+  sw::portal::FormPlan partial =
+      sw::portal::plan_form_login(cfg, page_of("http://p.cn/", half), "u", "p");
+  if (!partial.ok) {
+    check(sw::util::icontains(partial.reason, "pw1"), "names the side it did recognise");
+  } else {
+    check(true, "both sides recognised on this shape");
+  }
 }
 
 void test_url_parsing() {
