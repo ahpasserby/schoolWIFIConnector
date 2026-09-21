@@ -328,9 +328,15 @@ schoolwifi login                        # 第一道：校园网
 schoolwifi -c ~/.config/schoolwifi/stage2.ini login   # 第二道：运营商
 ```
 
-`stage2.ini` 用 `schoolwifi -c ~/.config/schoolwifi/stage2.ini diagnose` 的输出来填，
-账号密码另存钥匙串（在 `[account]` 里把 `keychain_service` 设成别的名字，
-比如 `schoolwifi-unicom`，再跑一次 `setup`）。
+第二份配置这样建：
+
+```bash
+schoolwifi -c ~/.config/schoolwifi/stage2.ini setup
+```
+
+写到**非默认路径**时，`setup` 会自动按文件名派生独立的钥匙串条目
+（`stage2.ini` → `schoolwifi-stage2`），两套账号密码不会互相覆盖。
+`[portal]` 段按 `schoolwifi -c ~/.config/schoolwifi/stage2.ini diagnose` 的输出填。
 
 > 一次命令自动串完两道认证的支持还没做。如果你有这种网络，欢迎提 issue 带上
 > （脱敏后的）两道门户的 `diagnose` 输出。

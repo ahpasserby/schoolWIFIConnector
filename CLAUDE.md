@@ -162,6 +162,9 @@ them away.
   `setup` wizard's prompts are in Chinese — that is who runs them. Code,
   comments, commit messages and diagnostic output (`status`, `login`, log
   lines) stay in English.
+- `setup` derives `keychain_service` from the filename when writing anywhere
+  but the default config path, so a second profile (a second network needing
+  different credentials) cannot overwrite the first one's stored password.
 - `setup` is the only place a user types values they have never seen named
   before, so each prompt names the config key, says what the field is, and
   states what Enter alone does. `interface` is validated against

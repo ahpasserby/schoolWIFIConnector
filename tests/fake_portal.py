@@ -127,10 +127,13 @@ class Portal(BaseHTTPRequestHandler):
                 self._send(200, '{"code":-1,"msg":"missing gateway parameters","data":""}',
                            ctype="application/json")
                 return
+            # Relative, and carrying an absolute URL in its own query -- which
+            # is what the real portal returns, and what used to be misread as
+            # an absolute URL and handed to curl without a host.
             self._send(200,
                        '{"code":0,"msg":"","data":{"userip":"10.1.2.3",'
                        '"byodMacRegistInfo":{"wlannasid":"","shopIdE":""},'
-                       f'"url":"http://{host}/login"}}}}',
+                       '"url":"/login?userurl=http://captive.apple.com/hotspot-detect.html"}}',
                        ctype="application/json")
             return
 

@@ -73,6 +73,20 @@ void test_url_resolution() {
            "port preserved");
   check_eq(resolve_url("http://a.cn/x/y.html", ""), "http://a.cn/x/y.html", "empty ref");
 
+  // A captive portal's relative URL carries whole URLs inside its query.
+  // Treating the first "://" found anywhere as a scheme made this look
+  // absolute, and libcurl then rejected it for having no host.
+  check_eq(resolve_url("http://172.29.250.5:30004/byod/index.html?a=1",
+                       "/byod/view/t.html?userurl=http://captive.apple.com/x&ssid=E"),
+           "http://172.29.250.5:30004/byod/view/t.html?userurl=http://captive.apple.com/x&ssid=E",
+           "relative path with an absolute URL in its query stays relative");
+  check_eq(resolve_url("http://a.cn/p/q.html", "next.html?u=https://b.cn/z"),
+           "http://a.cn/p/next.html?u=https://b.cn/z", "same for a dir-relative ref");
+  check_eq(resolve_url("http://a.cn/x", "ftp://b.cn/f"), "ftp://b.cn/f",
+           "a real scheme at the start is still absolute");
+  check_eq(resolve_url("http://a.cn/x", "mailto:a@b.cn"), "http://a.cn/mailto:a@b.cn",
+           "a schemeless colon is not a scheme");
+
   section("util::url_encode / expand_vars");
   check_eq(sw::util::url_encode("a b&c=d"), "a%20b%26c%3Dd", "reserved chars encoded");
   check_eq(sw::util::url_decode("a%20b%26c"), "a b&c", "decode round trip");
@@ -337,6 +351,12 @@ void test_url_parsing() {
   p = parse_url("portal.cn/login");
   check_eq(p.scheme, "http", "scheme defaults to http");
   check_eq(p.host, "portal.cn", "schemeless host");
+
+  // Same trap as resolve_url: the embedded URL must not be read as the scheme.
+  p = parse_url("/byod/view/t.html?userurl=http://captive.apple.com/x");
+  check_eq(p.host, "", "a relative path has no host, embedded URL notwithstanding");
+  check_eq(sw::util::url_origin("/byod/view/t.html?userurl=http://captive.apple.com/x"), "",
+           "url_origin refuses a relative path too");
 }
 
 void test_dhcp_nameserver_parsing() {

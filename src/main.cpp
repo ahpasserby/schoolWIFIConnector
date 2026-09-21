@@ -3,6 +3,7 @@
 #include <unistd.h>
 
 #include <chrono>
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <string>
@@ -516,6 +517,24 @@ int cmd_setup(sw::Config cfg, const std::string &path) {
   sw::wifi::Info info = sw::wifi::current(cfg.interface);
   std::vector<std::string> ifaces = sw::wifi::interfaces();
 
+  // A second network needs a second set of credentials, so a config written
+  // anywhere but the default path gets its own keychain entry derived from the
+  // filename. Two profiles sharing the default service name would otherwise
+  // overwrite each other's password whenever the accounts happened to match.
+  if (path != sw::default_config_path() && cfg.keychain_service == "schoolwifi") {
+    std::string base = path;
+    std::size_t slash = base.rfind('/');
+    if (slash != std::string::npos) base = base.substr(slash + 1);
+    std::size_t dot = base.rfind('.');
+    if (dot != std::string::npos && dot > 0) base = base.substr(0, dot);
+
+    std::string suffix;
+    for (char c : base) {
+      if (std::isalnum(static_cast<unsigned char>(c)) || c == '-' || c == '_') suffix += c;
+    }
+    if (!suffix.empty() && suffix != "config") cfg.keychain_service = "schoolwifi-" + suffix;
+  }
+
   // --- 1. SSID ------------------------------------------------------------
   std::string ssid_default = cfg.ssid.empty() ? info.ssid : cfg.ssid;
   std::printf("[1/4] 校园网 WiFi 名称  (配置项 ssid)\n");
@@ -596,6 +615,9 @@ int cmd_setup(sw::Config cfg, const std::string &path) {
   std::printf("  账号      (username)   %s\n", cfg.username.c_str());
   std::printf("  密码                   已存入钥匙串 (%s/%s)\n", cfg.keychain_service.c_str(),
               cfg.username.c_str());
+  if (cfg.keychain_service != "schoolwifi") {
+    std::printf("  （这份配置用的是独立的钥匙串条目，不会和默认配置冲突）\n");
+  }
   std::printf("  配置文件               %s\n", path.c_str());
   std::printf("\n下一步：连上校园网后运行  schoolwifi login\n");
   std::printf("如果失败，运行  schoolwifi diagnose  查看门户结构，\n");

@@ -28,6 +28,24 @@ int hex_val(char c) {
 
 char lower_c(char c) { return static_cast<char>(std::tolower(static_cast<unsigned char>(c))); }
 
+// Length of a leading "scheme://", or 0 when the string does not start with
+// one. Searching for "://" anywhere is wrong: captive portals routinely put a
+// whole URL inside a relative one's query string
+// (/byod/view/x.html?userurl=http://captive.apple.com/...), and treating that
+// as absolute hands libcurl a URL with no host.
+std::size_t scheme_prefix_length(const std::string &s) {
+  std::size_t pos = s.find("://");
+  if (pos == std::string::npos || pos == 0) return 0;
+  if (!std::isalpha(static_cast<unsigned char>(s[0]))) return 0;
+  for (std::size_t i = 1; i < pos; ++i) {
+    char c = s[i];
+    if (!(std::isalnum(static_cast<unsigned char>(c)) || c == '+' || c == '-' || c == '.')) {
+      return 0;
+    }
+  }
+  return pos + 3;
+}
+
 } // namespace
 
 std::string trim(const std::string &s) {
@@ -157,9 +175,9 @@ std::string html_unescape(const std::string &s) {
 }
 
 std::string url_origin(const std::string &url) {
-  std::size_t scheme = url.find("://");
-  if (scheme == std::string::npos) return "";
-  std::size_t slash = url.find('/', scheme + 3);
+  std::size_t after_scheme = scheme_prefix_length(url);
+  if (after_scheme == 0) return "";
+  std::size_t slash = url.find('/', after_scheme);
   return slash == std::string::npos ? url : url.substr(0, slash);
 }
 
@@ -167,10 +185,10 @@ UrlParts parse_url(const std::string &url) {
   UrlParts parts;
   std::string rest = url;
 
-  std::size_t scheme_end = rest.find("://");
-  if (scheme_end != std::string::npos) {
-    parts.scheme = lower(rest.substr(0, scheme_end));
-    rest = rest.substr(scheme_end + 3);
+  std::size_t after_scheme = scheme_prefix_length(rest);
+  if (after_scheme > 0) {
+    parts.scheme = lower(rest.substr(0, after_scheme - 3));
+    rest = rest.substr(after_scheme);
   } else {
     parts.scheme = "http";
   }
@@ -206,10 +224,10 @@ UrlParts parse_url(const std::string &url) {
 std::string resolve_url(const std::string &base, const std::string &ref) {
   std::string r = trim(ref);
   if (r.empty()) return base;
-  if (r.find("://") != std::string::npos) return r;
+  if (scheme_prefix_length(r) > 0) return r;
   if (starts_with(r, "//")) {
-    std::size_t scheme = base.find("://");
-    std::string proto = scheme == std::string::npos ? "http:" : base.substr(0, scheme + 1);
+    std::size_t after_scheme = scheme_prefix_length(base);
+    std::string proto = after_scheme == 0 ? "http:" : base.substr(0, after_scheme - 2);
     return proto + r;
   }
   std::string origin = url_origin(base);

@@ -223,6 +223,9 @@ grep -q "portal hop (byod init)" "$WORK/byod-login.log" \
 grep -q "nasRedirectUrl=" "$WORK/byod-login.log" \
   && ok "appends nasRedirectUrl the way index.js does" \
   || bad "appends nasRedirectUrl the way index.js does"
+grep -q "No host part in the URL" "$WORK/byod-login.log" \
+  && bad "relative init url was not resolved against the portal" \
+  || ok "resolves the relative init url despite the URL inside its query"
 grep -q "REJECT byod-init" "$WORK/byod.log" \
   && bad "gateway parameters were not forwarded to init" \
   || ok "forwards the gateway parameters to init"
