@@ -185,6 +185,7 @@ SCHOOLWIFI_PASSWORD='xxx' schoolwifi -v login
 | `success_contains` | 响应里出现这个字符串就算登录成功 | 空 |
 | `failure_contains` | 响应里出现这个字符串就算登录失败 | 空 |
 | `probe_urls` | 连通性探测地址，逗号分隔 | Apple / 华为 / 微软三个检测地址 |
+| `probe_timeout` | 每个探测地址等多少秒。网络会丢包（而不是明确拒绝）时，这个值决定了命令要等多久 | `5` |
 | `user_agent` | 伪装的 UA。有些门户对未知 UA 会返回坏掉的页面 | 内置 Safari UA |
 | `http_method` | 仅 `raw` 模式：`POST` 或 `GET` | `POST` |
 | `post_body` | 仅 `raw` 模式：请求体模板。占位符 `{username}` `{password}`，URL 编码版 `{username\|url}` `{password\|url}` | 空 |
@@ -277,6 +278,27 @@ dns_server = 10.253.0.1
 ```bash
 sudo networksetup -setdnsservers Wi-Fi Empty
 ```
+
+### 命令看起来卡住了，十几秒没反应
+
+多半不是卡死，是在等超时。如果网络把探测请求**静默丢包**（既不回应也不拒绝），
+每个探测地址都要等满 `probe_timeout` 秒。现在每次超时都会打一行：
+
+```
+INFO  probe http://captive.apple.com/... failed (Connection timed out after 5005 ms); trying the next one
+INFO  no check endpoint answered; trying the gateway at http://10.0.0.1/
+```
+
+嫌慢就把超时调小：
+
+```ini
+[portal]
+probe_timeout = 2
+```
+
+三个探测地址全都没响应时，工具会再试一次**默认网关**——宿舍和校园网的网关
+本身往往就是门户。只有当网关返回的页面确实像登录页（有密码框或跳转）时才会
+认定为门户，避免把普通路由器管理页误判成认证页。
 
 ### 门户页面能打开，但登录没反应
 

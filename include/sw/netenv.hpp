@@ -29,6 +29,11 @@ Interference detect();
 
 // Split out for testing.
 std::string parse_default_route_interface(const std::string &netstat_output);
+// The IPv4 default gateway. On a campus or dorm network this is very often the
+// portal itself, which makes it the last-resort place to look when no
+// connectivity-check endpoint answers at all.
+std::string default_gateway();
+std::string parse_default_gateway(const std::string &netstat_output);
 std::string parse_system_proxy(const std::string &scutil_proxy_output);
 bool is_tunnel_interface(const std::string &name);
 

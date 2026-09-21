@@ -20,6 +20,12 @@ make install      # -> $(PREFIX)/bin, PREFIX defaults to /usr/local
 make clean
 ```
 
+`CXXFLAGS` carries `-MMD -MP` and the Makefile `-include`s the generated `.d`
+files. Do not remove this: without header dependency tracking, editing a struct
+in `include/sw/` leaves stale objects linked against the old layout, and the
+resulting ABI mismatch surfaces as unrelated nonsense (a field reading empty,
+for instance) rather than as a build error.
+
 There is **no CMake and no package manager** — this is deliberate. Everything
 linked (`libcurl`, CoreWLAN, Security, Foundation) ships with macOS and the
 Command Line Tools, so `git clone && make` works on a bare machine. Do not
@@ -103,6 +109,16 @@ them away.
   (`dns.cpp`, libresolv with an explicit `nsaddr_list`) and pinning the answer
   via `CURLOPT_RESOLVE`. That option, like the cookie engine, is dropped by
   `curl_easy_reset()` and must be re-applied per request.
+- **A network that drops traffic is not the same as one that intercepts it.**
+  Dorm and campus networks sometimes blackhole the connectivity-check hosts
+  entirely, so `probe()` sees only timeouts and would report Offline with no
+  portal to find. After every check URL fails at the transport level it tries
+  `http://<default gateway>/`, and escalates to Captive only when that page
+  actually looks like a portal (password field or redirect hint) — a plain
+  router admin page must not send `login` off to submit credentials to it.
+- Each failed probe costs a full `probe_timeout`, so those failures log at
+  **info**, not debug. A command that prints nothing for 15 seconds reads as a
+  hang, and that is exactly how it was first reported.
 - A 200 response does not mean online. Portals frequently intercept without
   redirecting, answering 200 with a splash page — this is what BNBU does. For
   probe URLs with a known success payload the marker settles it; for any other

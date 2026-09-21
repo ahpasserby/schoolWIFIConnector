@@ -36,6 +36,7 @@ struct Config {
   std::string success_contains;  // substring proving success, checked first
   std::string failure_contains;  // substring proving failure
   std::vector<std::string> probe_urls;
+  int probe_timeout = 5;  // seconds per connectivity-check request
   std::string user_agent;
 
   // [watch]

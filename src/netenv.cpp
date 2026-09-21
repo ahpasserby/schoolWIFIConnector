@@ -1,5 +1,7 @@
 #include "sw/netenv.hpp"
 
+#include <arpa/inet.h>
+
 #include <cctype>
 #include <cstdlib>
 
@@ -64,6 +66,38 @@ std::string parse_default_route_interface(const std::string &netstat_output) {
     }
   }
   return "";
+}
+
+std::string parse_default_gateway(const std::string &netstat_output) {
+  for (const std::string &raw : util::split(netstat_output, '\n')) {
+    std::string line = util::trim(raw);
+    if (!util::starts_with(line, "default")) continue;
+
+    std::vector<std::string> fields;
+    std::string cur;
+    for (char c : line) {
+      if (std::isspace(static_cast<unsigned char>(c))) {
+        if (!cur.empty()) fields.push_back(cur);
+        cur.clear();
+      } else {
+        cur += c;
+      }
+    }
+    if (!cur.empty()) fields.push_back(cur);
+
+    // "default  <gateway>  <flags>  <iface>" - the gateway is a dotted quad
+    // when it is an address at all ("link#14" when the route is on-link).
+    for (std::size_t i = 1; i < fields.size(); ++i) {
+      struct in_addr addr {};
+      if (inet_pton(AF_INET, fields[i].c_str(), &addr) == 1) return fields[i];
+    }
+    return "";
+  }
+  return "";
+}
+
+std::string default_gateway() {
+  return parse_default_gateway(util::exec_capture("netstat -rn -f inet 2>/dev/null"));
 }
 
 std::string parse_system_proxy(const std::string &scutil_proxy_output) {

@@ -7,6 +7,7 @@
 #include "sw/dns.hpp"
 #include "sw/html.hpp"
 #include "sw/log.hpp"
+#include "sw/netenv.hpp"
 #include "sw/srun.hpp"
 #include "sw/util.hpp"
 
@@ -154,14 +155,63 @@ const char *state_name(State s) {
   return "unknown";
 }
 
+namespace {
+
+// Last resort when nothing answers a connectivity check: the default gateway.
+// On a dorm or campus network the gateway usually *is* the portal, and a
+// network that silently drops traffic to the check endpoints (rather than
+// intercepting it) leaves no other trace to follow.
+bool gateway_looks_like_portal(http::Client &client, const Config &cfg, Probe *pr) {
+  std::string gateway = netenv::default_gateway();
+  if (gateway.empty()) return false;
+
+  std::string url = "http://" + gateway + "/";
+  log::info("no check endpoint answered; trying the gateway at " + url);
+
+  http::Response resp = client.get(url, /*follow=*/false, cfg.probe_timeout);
+  if (!resp.ok) {
+    log::info("gateway did not answer either (" + resp.error + ")");
+    return false;
+  }
+
+  std::string location = resp.header("location");
+  bool redirects = resp.status >= 300 && resp.status < 400 && !location.empty();
+  bool portal_shaped = redirects || !html::meta_refresh_url(resp.body).empty() ||
+                       !html::js_redirect_url(resp.body).empty();
+  for (const html::Form &f : html::extract_forms(resp.body)) {
+    if (f.has_password()) portal_shaped = true;
+  }
+
+  if (!portal_shaped) {
+    // A plain router admin page is not a captive portal; saying so would send
+    // login off to submit credentials to someone's home router.
+    log::info("the gateway answered (HTTP " + std::to_string(resp.status) +
+              ") but the page does not look like a login portal");
+    return false;
+  }
+
+  log::info("the gateway is serving what looks like a login portal");
+  pr->state = State::Captive;
+  pr->probe_url = url;
+  pr->status = resp.status;
+  pr->body = resp.body;
+  pr->location = location;
+  pr->error.clear();
+  return true;
+}
+
+} // namespace
+
 Probe probe(http::Client &client, const Config &cfg) {
   Probe last;
+  int timeout = cfg.probe_timeout > 0 ? cfg.probe_timeout : 5;
+
   for (const std::string &url : effective_probe_urls(cfg)) {
     Probe pr;
     pr.probe_url = url;
 
     // follow = false: the redirect the portal injects IS the information we want.
-    http::Response resp = client.get(url, /*follow=*/false, /*timeout_sec=*/6);
+    http::Response resp = client.get(url, /*follow=*/false, timeout);
     pr.status = resp.status;
     pr.body = resp.body;
     pr.redirects = resp.redirects;
@@ -170,7 +220,10 @@ Probe probe(http::Client &client, const Config &cfg) {
       pr.state = State::Offline;
       pr.error = resp.error;
       last = pr;
-      continue;  // try the next endpoint before declaring the link dead
+      // Visible at the default log level on purpose: each of these costs a
+      // full timeout, and without it the command looks frozen.
+      log::info("probe " + url + " failed (" + resp.error + "); trying the next one");
+      continue;
     }
 
     pr.location = resp.header("location");
@@ -196,6 +249,10 @@ Probe probe(http::Client &client, const Config &cfg) {
     log::debug(std::string("probe ") + url + " -> " + state_name(pr.state) + " (status " +
                std::to_string(pr.status) + ")");
     return pr;
+  }
+
+  if (last.state == State::Offline && gateway_looks_like_portal(client, cfg, &last)) {
+    return last;
   }
   return last;
 }
@@ -246,6 +303,7 @@ LoginPage resolve_login_page(http::Client &client, const Config &cfg, const Prob
         page.url = url;
         page.html = html;
         page.trail.push_back("login form found at: " + url);
+        log::info("login form found at " + url);
         return page;
       }
     }
@@ -275,6 +333,7 @@ LoginPage resolve_login_page(http::Client &client, const Config &cfg, const Prob
 
     seen.push_back(url);
     page.trail.push_back(kind + ": " + resolved);
+    log::info("portal hop (" + kind + "): " + resolved);
     url = resolved;
     html.clear();
   }
@@ -401,7 +460,8 @@ void judge(http::Client &client, const Config &cfg, const http::Response &resp, 
       out->message = "verified online";
       return;
     }
-    log::debug("verify attempt " + std::to_string(attempt) + ": still " + state_name(check.state));
+    log::info("waiting for connectivity (" + std::to_string(attempt) + "/" +
+              std::to_string(kVerifyAttempts) + "): still " + state_name(check.state));
   }
 
   out->success = false;
@@ -491,7 +551,8 @@ LoginResult login(http::Client &client, const Config &cfg, const std::string &pa
         srun_result.message += "; verified online";
         return srun_result;
       }
-      log::debug("srun verify attempt " + std::to_string(attempt) + ": not online yet");
+      log::info("waiting for connectivity (" + std::to_string(attempt) + "/" +
+                std::to_string(kVerifyAttempts) + "): not online yet");
     }
     srun_result.success = false;
     srun_result.message = "srun accepted the login but connectivity never came up (" +

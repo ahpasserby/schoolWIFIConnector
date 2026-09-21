@@ -372,27 +372,28 @@ void test_host_pinning() {
 
   // The pin must survive curl_easy_reset(), which send() calls on every
   // request. Port 1 is closed, so a working pin turns a resolve failure into a
-  // connection failure -- a different error class, which is the observable
-  // proof the option took effect.
+  // connection failure -- a different error class, and the observable proof the
+  // option took effect.
   sw::http::Client fresh;
-  sw::http::Response before =
-      fresh.get("http://schoolwifi-pin-check.invalid:1/", /*follow=*/false, 3);
+  const char *url = "http://schoolwifi-pin-check.invalid:1/";
 
+  // Informational only. .invalid cannot resolve per RFC 2606, but resolvers
+  // that hijack NXDOMAIN will answer anyway, so this is reported rather than
+  // asserted -- a test whose *number* of assertions depends on the network
+  // hides real regressions behind a shifting total.
+  sw::http::Response before = fresh.get(url, /*follow=*/false, 3);
   if (before.ok || !sw::dns::is_resolve_failure(before.error)) {
-    std::printf("  SKIP  host pinning (a resolver answered for .invalid)\n");
-    return;
+    std::printf("  note  this network answers for .invalid, so the unpinned "
+                "baseline is weaker than usual\n");
   }
-  check(true, "unpinned .invalid host fails to resolve");
 
   fresh.add_resolve("schoolwifi-pin-check.invalid", "1", "127.0.0.1");
-  sw::http::Response after =
-      fresh.get("http://schoolwifi-pin-check.invalid:1/", /*follow=*/false, 3);
+  sw::http::Response after = fresh.get(url, /*follow=*/false, 3);
   check(!sw::dns::is_resolve_failure(after.error),
         "pinned host gets past resolution (error was: " + after.error + ")");
 
   // And again, proving the pin is re-applied rather than consumed once.
-  sw::http::Response again =
-      fresh.get("http://schoolwifi-pin-check.invalid:1/", /*follow=*/false, 3);
+  sw::http::Response again = fresh.get(url, /*follow=*/false, 3);
   check(!sw::dns::is_resolve_failure(again.error), "pin survives a second request");
 }
 
@@ -535,6 +536,11 @@ void test_netenv_parsing() {
   check_eq(sw::netenv::parse_default_route_interface("no routes here"), "",
            "missing default route");
 
+  check_eq(sw::netenv::parse_default_gateway(routes), "172.19.9.90", "default gateway");
+  check_eq(sw::netenv::parse_default_gateway(tunnelled), "",
+           "on-link default route has no gateway address");
+  check_eq(sw::netenv::parse_default_gateway("no routes here"), "", "missing gateway");
+
   check(sw::netenv::is_tunnel_interface("utun3"), "utun is a tunnel");
   check(sw::netenv::is_tunnel_interface("ipsec0"), "ipsec is a tunnel");
   check(!sw::netenv::is_tunnel_interface("en0"), "en0 is not a tunnel");
@@ -565,6 +571,7 @@ void test_config_roundtrip() {
   cfg.post_body = "u={username}&p={password|url}";
   cfg.extra_fields["operator"] = "telecom";
   cfg.captive_interval = 7;
+  cfg.probe_timeout = 3;
 
   std::string path = "build/test-config.ini";
   std::string err;
@@ -578,6 +585,7 @@ void test_config_roundtrip() {
   check_eq(loaded.post_body, "u={username}&p={password|url}", "post_body round trips");
   check_eq(loaded.extra_fields["operator"], "telecom", "field.* round trips");
   check(loaded.captive_interval == 7, "int value round trips");
+  check(loaded.probe_timeout == 3, "probe_timeout round trips");
 
   sw::Config missing;
   check(sw::load_config("build/definitely-not-here.ini", &missing, &err),

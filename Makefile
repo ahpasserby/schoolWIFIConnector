@@ -13,6 +13,10 @@ BUILD    ?= build
 
 CXXFLAGS ?= -std=c++17 -O2 -Wall -Wextra -Wpedantic
 CXXFLAGS += -Iinclude
+# Header dependency tracking. Without it, editing a header silently leaves
+# stale objects linked against the old struct layout -- an ABI mismatch whose
+# symptoms look like anything but a build problem.
+CXXFLAGS += -MMD -MP
 LDFLAGS  += -lcurl \
             -lresolv \
             -framework CoreWLAN \
@@ -34,6 +38,8 @@ LIB_OBJECTS := $(LIB_CXX_SOURCES:src/%.cpp=$(BUILD)/%.o) $(MM_SOURCES:src/%.mm=$
 TARGET      := $(BUILD)/schoolwifi
 TEST_TARGET := $(BUILD)/schoolwifi_test
 
+DEPS := $(OBJECTS:.o=.d) $(BUILD)/schoolwifi_test.d
+
 .PHONY: all clean install uninstall test e2e check run
 
 all: $(TARGET)
@@ -54,7 +60,7 @@ $(BUILD)/%.o: src/%.mm
 
 $(TEST_TARGET): $(LIB_OBJECTS) tests/test_main.cpp
 	@mkdir -p $(dir $@)
-	$(CXX) $(CXXFLAGS) tests/test_main.cpp $(LIB_OBJECTS) $(LDFLAGS) -o $@
+	$(CXX) $(CXXFLAGS) -MF $(BUILD)/schoolwifi_test.d tests/test_main.cpp $(LIB_OBJECTS) $(LDFLAGS) -o $@
 
 test: $(TEST_TARGET)
 	@$(TEST_TARGET)
@@ -80,3 +86,5 @@ uninstall:
 
 clean:
 	rm -rf $(BUILD)
+
+-include $(DEPS)

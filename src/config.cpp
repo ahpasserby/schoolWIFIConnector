@@ -106,6 +106,7 @@ bool load_config(const std::string &path, Config *out, std::string *err) {
         if (!t.empty()) out->probe_urls.push_back(t);
       }
     }
+    else if (key == "probe_timeout") out->probe_timeout = to_int(value, out->probe_timeout);
     else if (key == "online_interval") out->online_interval = to_int(value, out->online_interval);
     else if (key == "captive_interval") out->captive_interval = to_int(value, out->captive_interval);
     else if (key == "max_retries") out->max_retries = to_int(value, out->max_retries);
@@ -152,6 +153,7 @@ bool save_config(const Config &cfg, const std::string &path, std::string *err) {
   os << "password_field = " << cfg.password_field << "\n";
   os << "success_contains = " << cfg.success_contains << "\n";
   os << "failure_contains = " << cfg.failure_contains << "\n";
+  os << "probe_timeout = " << cfg.probe_timeout << "\n";
   for (const auto &kv : cfg.extra_fields) {
     os << "field." << kv.first << " = " << kv.second << "\n";
   }
