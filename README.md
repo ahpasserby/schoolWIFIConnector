@@ -6,8 +6,8 @@ macOS 上的校园网自动认证工具。用 C++ 写的单个二进制，零第
 > Captive Network Assistant（那个自动弹出的登录小窗）经常弹不出来、
 > 弹出来一片空白、或者点了没反应，导致连着 WiFi 却上不了网，只能开流量。
 
-`schoolwifi` 绕过那个小窗：它自己去探测门户、自己找到真正的登录页、
-自己填表提交，并且可以常驻后台，掉线了自动重连。
+`schoolwifi` 绕过那个小窗：自己探测门户、自己找到真正的登录页、自己完成认证
+（普通表单门户和[深澜 Srun](#支持的门户类型) 都支持），并且可以常驻后台，掉线自动重连。
 
 ```
 $ schoolwifi status
@@ -26,41 +26,79 @@ INFO  connected: verified online
 
 ---
 
-## 安装
+## 快速开始
 
-需要 macOS 和 Xcode Command Line Tools（`xcode-select --install`）。
-不需要 CMake、不需要 Homebrew、不需要任何第三方库 —— libcurl 和
-CoreWLAN 都是系统自带的。
+三步，从零到能用。
+
+**1. 编译安装**
 
 ```bash
 git clone https://github.com/ahpasserby/schoolWIFIConnector.git
 cd schoolWIFIConnector
-make
-sudo make install          # 装到 /usr/local/bin/schoolwifi
+make && sudo make install
 ```
 
-不想装到系统目录就直接用 `./build/schoolwifi`。
+只需要 Xcode Command Line Tools（`xcode-select --install`）。
+不用装 CMake、Homebrew 或任何第三方库。不想装到系统目录就直接用 `./build/schoolwifi`。
 
-## 快速开始
+**2. 连上校园网 WiFi，然后配置**
 
 ```bash
-# 1. 先连上校园网 WiFi（连上但还没认证的状态）
-# 2. 交互式配置：填学号和密码，密码会存进 macOS 钥匙串
 schoolwifi setup
+```
 
-# 3. 登录
+会问四个问题：**WiFi 名称、网卡名、学号、密码**。
+网卡名直接回车用 `en0` 就行（这一项要的是网卡名，不是 WiFi 名称）。
+密码存进 macOS 钥匙串，不会写进配置文件。
+
+**3. 登录**
+
+```bash
 schoolwifi login
+```
 
-# 4. 成功之后，让它开机自启、常驻后台
+看到 `connected: verified online` 就成了。
+
+到这里就能用了。想让它**开机自启、掉线自动重连**，再加一条：
+
+```bash
 schoolwifi install-agent
 ```
 
-`setup` 会问四个问题：**WiFi 名称、网卡名、学号、密码**。不确定该填什么、
-或者想知道每一项到底是干嘛的，看下面的 [配置项说明](#配置项说明)。
-（最容易填错的是「无线网卡名」—— 它要的是 `en0` 这种网卡名，不是 WiFi 名称，直接回车即可。）
+装完就不用管了：开机自动运行，检测到被门户拦截就自动认证。
+日志在 `~/Library/Logs/schoolwifi.log`。
 
-装好 LaunchAgent 之后就不用再管了：开机自动运行，检测到被门户拦截就自动认证，
-掉线也会自动重连。日志在 `~/Library/Logs/schoolwifi.log`。
+### 没连上怎么办
+
+按顺序试这三步，基本能定位：
+
+```bash
+schoolwifi diagnose    # 打印探测全过程，多数问题看一眼就知道
+schoolwifi -v login    # 打印每个 HTTP 请求和跳转
+schoolwifi open        # 保底方案：直接用浏览器打开真正的登录页
+```
+
+`schoolwifi open` 单独就能解决「页面弹不出来」——它绕过那个坏掉的系统小窗，
+把真正的登录页交给 Safari/Chrome。
+
+常见原因见 [常见问题](#常见问题)；要给自己学校调配置见
+[适配你自己学校的校园网](docs/adapting-to-your-campus.md)。
+
+---
+
+下面都是细节，按需查阅：
+
+| 章节 | 内容 |
+| --- | --- |
+| [命令](#命令) | 每个子命令分别干什么 |
+| [配置项说明](#配置项说明) | 配置文件每一项的含义、默认值、什么时候需要改 |
+| [支持的门户类型](#支持的门户类型) | 普通表单 / 深澜 Srun / API 式门户 |
+| [常见问题](#常见问题) | DNS 解析失败、代理干扰、登录没反应 |
+| [它是怎么工作的](#它是怎么工作的) | 探测、找登录页、提交、验证的原理 |
+| [开发](#开发) | 编译、单元测试、端到端测试 |
+| [兼容性与安全](#兼容性与安全) | 系统要求、密码存储、证书校验 |
+
+---
 
 ## 命令
 
@@ -76,10 +114,6 @@ schoolwifi install-agent
 | `install-agent` / `uninstall-agent` / `agent-status` | 管理开机自启 |
 
 全局选项：`-c/--config PATH`、`-v/--verbose`（打印每个 HTTP 请求和跳转）、`-q/--quiet`。
-
-> 如果自动登录一时搞不定，`schoolwifi open` 是保底方案：
-> 它把真正的登录页地址交给 Safari/Chrome 打开，绕过那个坏掉的系统小窗。
-> 单这一条命令就能解决「页面弹不出来」的问题。
 
 ## 配置项说明
 
