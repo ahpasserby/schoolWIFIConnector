@@ -391,50 +391,103 @@ int cmd_diagnose(const sw::Config &cfg) {
   return 0;
 }
 
+// The setup wizard is the one place a first-time user is asked to type
+// values they have never seen named before, so every prompt states what the
+// field means, what the config key is called, and what Enter alone will do.
+// It speaks Chinese because that is who runs it; diagnostic output elsewhere
+// stays English.
 int cmd_setup(sw::Config cfg, const std::string &path) {
-  std::printf("schoolwifi setup - writing %s\n\n", path.c_str());
+  std::printf("schoolwifi 配置向导\n");
+  std::printf("配置文件将写入：%s\n", path.c_str());
+  std::printf("（每一项直接按回车都会使用方括号里的默认值）\n\n");
 
   sw::wifi::Info info = sw::wifi::current(cfg.interface);
-  std::string ssid_default = cfg.ssid.empty() ? info.ssid : cfg.ssid;
+  std::vector<std::string> ifaces = sw::wifi::interfaces();
 
-  if (!info.ssid.empty()) std::printf("Currently associated with: %s\n", info.ssid.c_str());
-  cfg.ssid = sw::util::read_line(
-      "SSID to auto-login on [" + (ssid_default.empty() ? "any" : ssid_default) + "]: ", ssid_default);
+  // --- 1. SSID ------------------------------------------------------------
+  std::string ssid_default = cfg.ssid.empty() ? info.ssid : cfg.ssid;
+  std::printf("[1/4] 校园网 WiFi 名称  (配置项 ssid)\n");
+  std::printf("      只有连到这个 WiFi 时才会自动登录，避免在别的网络上发送校园网密码。\n");
+  if (info.ssid.empty()) {
+    std::printf("      当前读不到已连接的 WiFi 名称，请手动输入。\n");
+  } else {
+    std::printf("      当前已连接：%s\n", info.ssid.c_str());
+  }
+  std::printf("      输入 any 表示不限制网络。\n");
+  cfg.ssid = sw::util::read_line("    > [" + (ssid_default.empty() ? "any" : ssid_default) + "] ",
+                                 ssid_default);
   if (sw::util::iequals(cfg.ssid, "any")) cfg.ssid.clear();
 
-  cfg.interface = sw::util::read_line("Wi-Fi interface [" + info.interface + "]: ", info.interface);
+  // --- 2. Interface -------------------------------------------------------
+  std::printf("\n[2/4] 无线网卡名  (配置项 interface)\n");
+  std::printf("      这里要填的是网卡名，不是 WiFi 名称。Mac 上几乎总是 en0，直接回车即可。\n");
+  if (!ifaces.empty()) {
+    std::printf("      检测到的无线网卡：%s\n", sw::util::join(ifaces, ", ").c_str());
+  }
+
+  for (;;) {
+    std::string chosen = sw::util::read_line("    > [" + info.interface + "] ", info.interface);
+    if (ifaces.empty()) {  // nothing to validate against; accept it
+      cfg.interface = chosen;
+      break;
+    }
+    bool known = false;
+    for (const std::string &name : ifaces) {
+      if (sw::util::iequals(name, chosen)) known = true;
+    }
+    if (known) {
+      cfg.interface = chosen;
+      break;
+    }
+    // Rejecting this is worth the extra prompt: a bogus interface makes every
+    // later request fail to bind, with an error that looks nothing like the
+    // typo that caused it.
+    std::printf("      \"%s\" 不是这台机器上的无线网卡。可选：%s\n", chosen.c_str(),
+                sw::util::join(ifaces, ", ").c_str());
+    std::printf("      （如果你想填的是 WiFi 名称，那是上一项 ssid，不是这一项。）\n");
+  }
+
+  // --- 3. Username --------------------------------------------------------
+  std::printf("\n[3/4] 校园网账号  (配置项 username)\n");
+  std::printf("      通常是学号，就是你在网页认证页面里填的那个账号。\n");
   cfg.username = sw::util::read_line(
-      "Campus username" + (cfg.username.empty() ? "" : " [" + cfg.username + "]") + ": ",
-      cfg.username);
+      cfg.username.empty() ? "    > " : "    > [" + cfg.username + "] ", cfg.username);
   if (cfg.username.empty()) {
-    std::fprintf(stderr, "error: a username is required\n");
+    std::fprintf(stderr, "\n错误：账号不能为空。\n");
     return 2;
   }
 
-  std::string password = sw::util::read_password("Campus password (not echoed): ");
+  // --- 4. Password --------------------------------------------------------
+  std::printf("\n[4/4] 校园网密码\n");
+  std::printf("      输入时不会回显。密码存进 macOS 登录钥匙串，不会写进配置文件。\n");
+  std::string password = sw::util::read_password("    > ");
   if (password.empty()) {
-    std::fprintf(stderr, "error: a password is required\n");
+    std::fprintf(stderr, "\n错误：密码不能为空。\n");
     return 2;
   }
 
   std::string err;
   if (!sw::keychain::set_password(cfg.keychain_service, cfg.username, password, &err)) {
-    std::fprintf(stderr, "error: could not store the password in the Keychain: %s\n", err.c_str());
+    std::fprintf(stderr, "错误：无法写入钥匙串：%s\n", err.c_str());
     return 1;
   }
-  std::printf("Stored the password in the login Keychain (%s/%s).\n", cfg.keychain_service.c_str(),
-              cfg.username.c_str());
 
   if (cfg.log_file.empty()) cfg.log_file = "~/Library/Logs/schoolwifi.log";
-
   if (!sw::save_config(cfg, path, &err)) {
-    std::fprintf(stderr, "error: %s\n", err.c_str());
+    std::fprintf(stderr, "错误：%s\n", err.c_str());
     return 1;
   }
 
-  std::printf("\nWrote %s\n", path.c_str());
-  std::printf("Next: connect to the campus Wi-Fi, then run `schoolwifi login`.\n");
-  std::printf("If it fails, run `schoolwifi diagnose` and adjust the [portal] section.\n");
+  std::printf("\n配置完成\n");
+  std::printf("  WiFi 名称 (ssid)       %s\n", cfg.ssid.empty() ? "(不限制)" : cfg.ssid.c_str());
+  std::printf("  无线网卡  (interface)  %s\n", cfg.interface.c_str());
+  std::printf("  账号      (username)   %s\n", cfg.username.c_str());
+  std::printf("  密码                   已存入钥匙串 (%s/%s)\n", cfg.keychain_service.c_str(),
+              cfg.username.c_str());
+  std::printf("  配置文件               %s\n", path.c_str());
+  std::printf("\n下一步：连上校园网后运行  schoolwifi login\n");
+  std::printf("如果失败，运行  schoolwifi diagnose  查看门户结构，\n");
+  std::printf("并参考 docs/adapting-to-your-campus.md 填写 [portal] 段。\n");
   return 0;
 }
 

@@ -113,8 +113,15 @@ them away.
   running across config-format changes.
 - `watch` is the only command that writes to the log file by default, and it
   polls with 1-second wakeups so launchd's SIGTERM is honoured promptly.
-- User-facing docs (README, `docs/`, `config/config.example.ini`) are in
-  Chinese; code, comments and commit messages are in English.
+- User-facing docs (README, `docs/`, `config/config.example.ini`) and the
+  `setup` wizard's prompts are in Chinese — that is who runs them. Code,
+  comments, commit messages and diagnostic output (`status`, `login`, log
+  lines) stay in English.
+- `setup` is the only place a user types values they have never seen named
+  before, so each prompt names the config key, says what the field is, and
+  states what Enter alone does. `interface` is validated against
+  `wifi::interfaces()`: a bad value there fails much later with an error that
+  looks nothing like the typo that caused it.
 
 ## Testing without a campus network
 
