@@ -100,6 +100,7 @@ bool load_config(const std::string &path, Config *out, std::string *err) {
     else if (key == "failure_contains") out->failure_contains = value;
     else if (key == "user_agent") out->user_agent = value;
     else if (key == "service_suffix_id") out->service_suffix_id = value;
+    else if (key == "next_stage") out->next_stage = value;
     else if (key == "probe_urls") {
       out->probe_urls.clear();
       for (const std::string &u : util::split(value, ',')) {
@@ -156,6 +157,7 @@ bool save_config(const Config &cfg, const std::string &path, std::string *err) {
   os << "failure_contains = " << cfg.failure_contains << "\n";
   os << "probe_timeout = " << cfg.probe_timeout << "\n";
   os << "service_suffix_id = " << cfg.service_suffix_id << "\n";
+  os << "next_stage = " << cfg.next_stage << "\n";
   for (const auto &kv : cfg.extra_fields) {
     os << "field." << kv.first << " = " << kv.second << "\n";
   }

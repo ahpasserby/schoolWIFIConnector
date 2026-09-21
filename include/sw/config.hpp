@@ -41,6 +41,9 @@ struct Config {
   // Huawei BYOD portals: which service (operator) the account belongs to.
   // Empty uses the portal's own default.
   std::string service_suffix_id;
+  // Networks that authenticate in stages: the config to run after this login
+  // succeeds but leaves a different portal in the way.
+  std::string next_stage;
 
   // [watch]
   int online_interval = 30;   // seconds between probes while online

@@ -18,7 +18,7 @@ import hmac
 import os
 import sys
 import urllib.parse
-from http.server import BaseHTTPRequestHandler, HTTPServer
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from srun_reference import build_info_param_for_test, srun_hmd5, srun_chksum
@@ -27,9 +27,12 @@ USERNAME = "20210001"
 PASSWORD = "s3cr3t p@ss"
 CSRF = "tok-abc-123"
 ACID = "1"
+# The second layer deliberately uses a different account, as an ISP layer does.
+STAGE2_USERNAME = "isp-user"
+STAGE2_PASSWORD = "isp-pass"
 CLIENT_IP = "10.253.51.53"
 
-state = {"online": False, "token": None, "mode": "form"}
+state = {"online": False, "token": None, "mode": "form", "stage1": False, "stage2_port": None}
 
 # The SPA a Srun portal actually serves: inputs carry only `id`, there is no
 # <form>, and the parameters the client must compute come from CONFIG.
@@ -58,6 +61,9 @@ SRUN_PAGE = """<!DOCTYPE html><html><head>
 
 
 class Portal(BaseHTTPRequestHandler):
+    # HTTP/1.1 keep-alive plus a threading server: a later login stage opens a
+    # fresh connection while the previous one is still held open, and a
+    # single-threaded server would never accept it.
     protocol_version = "HTTP/1.1"
 
     def log_message(self, fmt, *args):
@@ -83,7 +89,13 @@ class Portal(BaseHTTPRequestHandler):
             if state["online"]:
                 self._send(200, "<HTML><HEAD><TITLE>Success</TITLE></HEAD>"
                                 "<BODY>Success</BODY></HTML>")
-            elif state["mode"] in ("byod", "byod-loop"):
+            elif state["mode"] == "two-stage" and state["stage1"]:
+                # The first layer is satisfied; a different portal now holds
+                # the network, which is what a chained network looks like.
+                self._send(200, "<html><body><script>top.self.location.href="
+                                f"'http://127.0.0.1:{state['stage2_port']}/stage2/login'"
+                                ";</script></body></html>")
+            elif state["mode"] in ("byod", "byod-loop", "two-stage"):
                 # A BYOD gateway hands its own parameters to the portal.
                 self._send(200, "<html><body><script>top.self.location.href="
                                 f"'http://{host}/byod/index.html?usermac=de03-2992-d0c7"
@@ -101,6 +113,15 @@ class Portal(BaseHTTPRequestHandler):
             self._send(200, '<html><head><meta http-equiv="refresh" '
                             'content="0;url=/srun_portal_pc?ac_id=1&theme=pro">'
                             '</head><body>redirecting</body></html>')
+            return
+
+        if path == "/stage2/login":
+            self._send(200, '<html><head><title>ISP</title></head><body>'
+                            '<form method="POST" action="/stage2/auth">'
+                            '<input type="hidden" name="tok" value="s2-token">'
+                            '<input type="text" name="userName">'
+                            '<input type="password" name="userPwd">'
+                            '</form></body></html>')
             return
 
         if path == "/byod/index.html":
@@ -326,7 +347,11 @@ class Portal(BaseHTTPRequestHandler):
                    "byod-service")
             return
 
-        state["online"] = True
+        if state["mode"] == "two-stage":
+            # Satisfying this layer does not put the machine online.
+            state["stage1"] = True
+        else:
+            state["online"] = True
         self._send(200,
                    '{"code":0,"msg":"login_ok","data":{"ifModifyPwd":false,'
                    '"isThirdpartUrl":false,"url":"/byod/view/byod/byodResult.html",'
@@ -356,6 +381,19 @@ class Portal(BaseHTTPRequestHandler):
         if path == "/byod/byodrs/login/defaultLogin":
             return  # handled below from the raw body
 
+        if path == "/stage2/auth":
+            if flat.get("tok") != "s2-token":
+                self.log_message("REJECT stage2-token")
+                self._send(200, "<html><body>ERROR: bad token</body></html>")
+                return
+            if flat.get("userName") != STAGE2_USERNAME or flat.get("userPwd") != STAGE2_PASSWORD:
+                self.log_message("REJECT stage2-credentials")
+                self._send(200, "<html><body>ERROR: bad credentials</body></html>")
+                return
+            state["online"] = True
+            self._send(200, "<html><body>Stage 2 login succeeded</body></html>")
+            return
+
         if path != "/auth":
             self._send(404, "not found")
             return
@@ -382,12 +420,22 @@ class Portal(BaseHTTPRequestHandler):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=8111)
-    ap.add_argument("--mode", choices=["form", "srun", "byod", "byod-loop"], default="form",
+    ap.add_argument("--mode", choices=["form", "srun", "byod", "byod-loop", "two-stage"],
+                    default="form",
                     help="form = classic HTML form portal; srun = Srun/深澜 SPA portal; "
-                         "byod = Huawei-style BYOD shell that hides the login page behind an API")
+                         "byod = Huawei-style BYOD shell that hides the login page behind an API; "
+                         "two-stage = a BYOD layer that, once satisfied, reveals a second portal "
+                         "on the next port with its own credentials")
     args = ap.parse_args()
     state["mode"] = args.mode
-    server = HTTPServer(("127.0.0.1", args.port), Portal)
+    if args.mode == "two-stage":
+        import threading
+        state["stage2_port"] = args.port + 1
+        second = ThreadingHTTPServer(("127.0.0.1", state["stage2_port"]), Portal)
+        threading.Thread(target=second.serve_forever, daemon=True).start()
+        sys.stderr.write(f"[portal] stage 2 listening on 127.0.0.1:{state['stage2_port']}\n")
+
+    server = ThreadingHTTPServer(("127.0.0.1", args.port), Portal)
     sys.stderr.write(f"[portal] listening on 127.0.0.1:{args.port} (mode={args.mode})\n")
     server.serve_forever()
 

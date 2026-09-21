@@ -188,6 +188,7 @@ SCHOOLWIFI_PASSWORD='xxx' schoolwifi -v login
 | `probe_timeout` | 每个探测地址等多少秒。网络会丢包（而不是明确拒绝）时，这个值决定了命令要等多久 | `5` |
 | `user_agent` | 伪装的 UA。有些门户对未知 UA 会返回坏掉的页面 | 内置 Safari UA |
 | `service_suffix_id` | 仅华为 BYOD：账号属于哪个"服务"（通常是运营商）。留空用门户默认值。报 `E63018` 时多半要改这个 | 空 |
+| `next_stage` | 两级认证网络：这一层过了之后接着跑的配置文件路径。见[需要连续过两道认证](#需要连续过两道认证比如校园网--运营商宽带) | 空 |
 | `http_method` | 仅 `raw` 模式：`POST` 或 `GET` | `POST` |
 | `post_body` | 仅 `raw` 模式：请求体模板。占位符 `{username}` `{password}`，URL 编码版 `{username\|url}` `{password\|url}` | 空 |
 
@@ -306,6 +307,86 @@ dns_server = 10.253.0.1
 ```bash
 sudo networksetup -setdnsservers Wi-Fi Empty
 ```
+
+### `no network path at all` / 所有域名都解析不了
+
+先看 `schoolwifi status` 有没有 IPv4 地址：
+
+```
+IPv4         (none)
+Link         no IPv4 address on en0 and no default route -- the network has not
+             been joined yet (DHCP may still be running)
+```
+
+出现 `Link` 这一行说明**机器压根还没连上网**（Wi-Fi 没关联，或刚切换网络、
+DHCP 还没完成），不是门户或 DNS 的问题。等几秒、看到 IP 地址再试。
+
+刚切换 Wi-Fi 之后马上跑命令很容易撞上这个。
+
+### 命令看起来卡住了，十几秒没反应
+
+多半不是卡死，是在等超时。如果网络把探测请求**静默丢包**（既不回应也不拒绝），
+每个探测地址都要等满 `probe_timeout` 秒。现在每次超时都会打一行：
+
+```
+INFO  probe http://captive.apple.com/... failed (Connection timed out after 5005 ms); trying the next one
+INFO  no check endpoint answered; trying the gateway at http://10.0.0.1/
+```
+
+嫌慢就把超时调小：
+
+```ini
+[portal]
+probe_timeout = 2
+```
+
+三个探测地址全都没响应时，工具会再试一次**默认网关**——宿舍和校园网的网关
+本身往往就是门户。只有当网关返回的页面确实像登录页（有密码框或跳转）时才会
+认定为门户，避免把普通路由器管理页误判成认证页。
+
+### 需要连续过两道认证（比如校园网 + 运营商宽带）
+
+有些宿舍网是**两级认证**：先过校园网门户，再过一个运营商（联通/电信/移动）的
+宽带认证，两道的账号密码通常不一样。
+
+**已支持自动串联。** 给每一层各写一份配置，第一层用 `next_stage` 指向第二层：
+
+```ini
+# ~/.config/schoolwifi/dorm.ini —— 第一层（校园网）
+[account]
+username = <校园网账号>
+keychain_service = schoolwifi
+
+[portal]
+next_stage = ~/.config/schoolwifi/dorm-isp.ini
+```
+
+```ini
+# ~/.config/schoolwifi/dorm-isp.ini —— 第二层（运营商）
+[account]
+username = <运营商账号>
+```
+
+第二层的配置照常用 `setup` 生成（写到非默认路径会自动用独立的钥匙串条目）：
+
+```bash
+schoolwifi -c ~/.config/schoolwifi/dorm-isp.ini setup
+schoolwifi -c ~/.config/schoolwifi/dorm.ini login     # 一条命令过完两层
+```
+
+日志里能看到交接：
+
+```
+INFO  byod: submitting login for <校园网账号>
+INFO  stage 1 done; 10.20.30.40 now wants authentication too -- continuing with .../dorm-isp.ini
+INFO  submitting login to http://10.20.30.40/... as <运营商账号>
+INFO  connected: verified online
+```
+
+最多串 4 层，超过会报错而不是无限循环。
+
+> `SCHOOLWIFI_PASSWORD` 只对你直接调用的那一层生效，不会穿透到后续阶段
+> ——后面的阶段在别的地方认证，用的是自己的账号。
 
 ### `no network path at all` / 所有域名都解析不了
 

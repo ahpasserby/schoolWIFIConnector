@@ -326,6 +326,62 @@ grep -q "no <form> and no <input> fields" "$WORK/loop-login.log" \
 kill "$PORTAL_PID" 2>/dev/null
 wait "$PORTAL_PID" 2>/dev/null
 
+kill "$PORTAL_PID" 2>/dev/null
+wait "$PORTAL_PID" 2>/dev/null
+
+# ---------------------------------------------------------------------------
+# Networks that authenticate in stages: satisfying the first portal reveals a
+# second one, on another host, wanting a different account.
+# ---------------------------------------------------------------------------
+echo ""
+echo "e2e: chained two-stage login"
+
+TS_PORT=$((PORT + 4))
+python3 "$ROOT/tests/fake_portal.py" --port "$TS_PORT" --mode two-stage 2>"$WORK/ts.log" &
+PORTAL_PID=$!
+for _ in $(seq 1 50); do
+  curl -s -o /dev/null "http://127.0.0.1:$TS_PORT/byod/index.html" && break
+  sleep 0.1
+done
+
+cat > "$WORK/ts2.ini" <<INI
+[network]
+interface =
+[account]
+username = isp-user
+password = isp-pass
+[portal]
+probe_urls = http://127.0.0.1:$TS_PORT/probe
+failure_contains = ERROR:
+INI
+cat > "$WORK/ts1.ini" <<INI
+[network]
+interface =
+[account]
+username = 20210001
+[portal]
+probe_urls = http://127.0.0.1:$TS_PORT/probe
+service_suffix_id = 9
+next_stage = $WORK/ts2.ini
+INI
+
+if SCHOOLWIFI_PASSWORD='s3cr3t p@ss' "$BIN" --config "$WORK/ts1.ini" login >"$WORK/ts-login.log" 2>&1; then
+  ok "a two-stage network logs in end to end"
+else
+  bad "a two-stage network logs in end to end -- $(tail -2 "$WORK/ts-login.log")"
+fi
+grep -q "stage 1 done" "$WORK/ts-login.log" \
+  && ok "reports the first stage as done rather than failed" \
+  || bad "reports the first stage as done rather than failed"
+grep -q "as isp-user" "$WORK/ts-login.log" \
+  && ok "the second stage uses its own account" || bad "the second stage uses its own account"
+grep -q "REJECT stage2-credentials" "$WORK/ts.log" \
+  && bad "SCHOOLWIFI_PASSWORD leaked into the second stage" \
+  || ok "SCHOOLWIFI_PASSWORD does not leak into the second stage"
+
+kill "$PORTAL_PID" 2>/dev/null
+wait "$PORTAL_PID" 2>/dev/null
+
 # ---------------------------------------------------------------------------
 # A probe host the system resolver cannot resolve must still reach the DNS
 # fallback and then the gateway fallback. Before those were wired into probe(),

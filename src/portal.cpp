@@ -142,12 +142,20 @@ std::string authority_of(const std::string &url) {
   return default_port ? parts.host : parts.host + ":" + parts.port;
 }
 
-// Where a probe says the interception is happening.
+// Where a probe says the interception is happening. With no Location header
+// the response body was substituted, and the portal is wherever that body
+// sends the browser -- naming the probe URL instead would report
+// "captive.apple.com" as the portal, which is never true.
 std::string intercepting_authority(const Probe &pr) {
   if (pr.state != State::Captive) return "";
-  std::string where =
-      pr.location.empty() ? pr.probe_url : util::resolve_url(pr.probe_url, pr.location);
-  return authority_of(where);
+
+  if (!pr.location.empty()) return authority_of(util::resolve_url(pr.probe_url, pr.location));
+
+  std::string hint = html::meta_refresh_url(pr.body);
+  if (hint.empty()) hint = html::js_redirect_url(pr.body);
+  if (hint.empty()) return "";  // cannot tell; better to claim nothing
+
+  return authority_of(util::resolve_url(pr.probe_url, hint));
 }
 
 } // namespace
@@ -156,6 +164,13 @@ std::string intercepting_authority(const Probe &pr) {
 // in the way", which is what a network with chained logins looks like from
 // here. Reporting the second as a plain failure sends people hunting for a
 // wrong-password problem they do not have.
+std::string second_stage_portal(const Probe &last, const std::string &submitted_to) {
+  std::string now_at = intercepting_authority(last);
+  std::string was_at = authority_of(submitted_to);
+  if (now_at.empty() || was_at.empty() || now_at == was_at) return "";
+  return now_at;
+}
+
 std::string explain_failed_verification(const Probe &last, const std::string &submitted_to) {
   std::string now_at = intercepting_authority(last);
   std::string was_at = authority_of(submitted_to);
@@ -558,6 +573,7 @@ void judge(http::Client &client, const Config &cfg, const http::Response &resp, 
   }
 
   out->success = false;
+  out->next_portal = second_stage_portal(last, out->posted_to);
   out->message = explain_failed_verification(last, out->posted_to);
   if (!resp.body.empty()) {
     std::string t = html::title(resp.body);
@@ -650,6 +666,7 @@ LoginResult login(http::Client &client, const Config &cfg, const std::string &pa
                 std::to_string(kVerifyAttempts) + "): not online yet");
     }
     srun_result.success = false;
+    srun_result.next_portal = second_stage_portal(last, srun_result.posted_to);
     srun_result.message = "srun accepted the login (" + srun_result.message + ") but " +
                           explain_failed_verification(last, srun_result.posted_to);
     return srun_result;
@@ -674,6 +691,7 @@ LoginResult login(http::Client &client, const Config &cfg, const std::string &pa
                 std::to_string(kVerifyAttempts) + "): not online yet");
     }
     byod_result.success = false;
+    byod_result.next_portal = second_stage_portal(last, byod_result.posted_to);
     byod_result.message = "byod accepted the login (" + byod_result.message + ") but " +
                           explain_failed_verification(last, byod_result.posted_to);
     return byod_result;

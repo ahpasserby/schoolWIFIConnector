@@ -56,6 +56,9 @@ struct LoginResult {
   // Field names/values actually submitted. The password is masked before it is
   // recorded here, so this is safe to print in diagnostics.
   std::vector<std::pair<std::string, std::string>> sent_fields;
+  // Set when this login was accepted but a *different* portal is now
+  // intercepting: the network has more than one authentication stage.
+  std::string next_portal;
 };
 
 // Performs a full login: probe -> resolve page -> submit -> verify by
@@ -81,6 +84,9 @@ struct FormPlan {
 // offline. Exposed for testing; distinguishes a rejected credential from a
 // second portal taking over, which is what chained logins look like.
 std::string explain_failed_verification(const Probe &last, const std::string &submitted_to);
+// The authority of a portal intercepting after a successful login, when it is
+// not the one just logged in to. "" when there is no second stage to report.
+std::string second_stage_portal(const Probe &last, const std::string &submitted_to);
 
 FormPlan plan_form_login(const Config &cfg, const LoginPage &page, const std::string &username,
                          const std::string &password);

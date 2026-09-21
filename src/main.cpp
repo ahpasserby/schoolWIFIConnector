@@ -110,11 +110,16 @@ bool parse_options(int argc, char **argv, Options *opts) {
   return true;
 }
 
-// Password sources, in order of precedence.
-bool resolve_password(const sw::Config &cfg, std::string *out, std::string *err) {
-  if (const char *env = std::getenv("SCHOOLWIFI_PASSWORD"); env && *env) {
-    *out = env;
-    return true;
+// Password sources, in order of precedence. SCHOOLWIFI_PASSWORD is a manual
+// override for the login being invoked, so it does not apply to a chained
+// later stage: that stage authenticates somewhere else, with its own account.
+bool resolve_password(const sw::Config &cfg, std::string *out, std::string *err,
+                      bool allow_env = true) {
+  if (allow_env) {
+    if (const char *env = std::getenv("SCHOOLWIFI_PASSWORD"); env && *env) {
+      *out = env;
+      return true;
+    }
   }
   if (!cfg.username.empty()) {
     std::string kc_err;
@@ -177,7 +182,12 @@ int cmd_status(const sw::Config &cfg) {
   return pr.state == sw::portal::State::Online ? 0 : 1;
 }
 
-int cmd_login(const sw::Config &cfg) {
+// Networks that authenticate in stages need a second login, with different
+// credentials, against a portal that only appears once the first one is
+// satisfied. Each stage is an ordinary config file; `next_stage` chains them.
+constexpr int kMaxLoginStages = 4;
+
+int cmd_login(const sw::Config &cfg, int stage = 1) {
   if (cfg.username.empty()) {
     sw::log::error("no username configured; run `schoolwifi setup`");
     return 2;
@@ -188,7 +198,7 @@ int cmd_login(const sw::Config &cfg) {
 
   std::string password;
   std::string err;
-  if (!resolve_password(cfg, &password, &err)) {
+  if (!resolve_password(cfg, &password, &err, /*allow_env=*/stage == 1)) {
     sw::log::error(err);
     return 2;
   }
@@ -201,6 +211,33 @@ int cmd_login(const sw::Config &cfg) {
     sw::log::info("connected: " + res.message);
     return 0;
   }
+
+  // This login was accepted; another portal simply took over. Carry on with
+  // the next stage's config rather than reporting a failure.
+  if (!res.next_portal.empty() && !cfg.next_stage.empty()) {
+    if (stage >= kMaxLoginStages) {
+      sw::log::error("stopped after " + std::to_string(stage) +
+                     " authentication stages; next_stage is probably looping");
+      return 1;
+    }
+
+    std::string next_path = sw::util::expand_tilde(cfg.next_stage);
+    sw::log::info("stage " + std::to_string(stage) + " done; " + res.next_portal +
+                  " now wants authentication too -- continuing with " + next_path);
+
+    sw::Config next;
+    std::string load_err;
+    if (!sw::load_config(next_path, &next, &load_err)) {
+      sw::log::error("could not read " + next_path + ": " + load_err);
+      return 2;
+    }
+    if (next.source_path.empty()) {
+      sw::log::error("next_stage points at " + next_path + ", which does not exist");
+      return 2;
+    }
+    return cmd_login(next, stage + 1);
+  }
+
   sw::log::error("login failed: " + res.message);
 
   // Check this before blaming DNS: with no lease every name fails to resolve,

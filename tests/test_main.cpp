@@ -835,6 +835,27 @@ void test_chained_portal_diagnosis() {
   check(sw::util::icontains(msg, "second authentication"),
         "a different port counts as a different portal");
 
+  // Interception without a Location header: the portal is whatever the
+  // substituted body points at, never the probe URL itself.
+  sw::portal::Probe injected;
+  injected.state = sw::portal::State::Captive;
+  injected.probe_url = "http://captive.apple.com/hotspot-detect.html";
+  injected.body = "<html><body><script>top.self.location.href="
+                  "'http://10.20.30.40:8080/unicom/login';</script></body></html>";
+  msg = sw::portal::explain_failed_verification(injected, "http://172.29.250.5:30004/byod/x");
+  check(sw::util::icontains(msg, "10.20.30.40:8080"), "names the portal the body points at");
+  check(!sw::util::icontains(msg, "captive.apple.com"),
+        "never reports the probe URL as the portal");
+
+  // Nothing to go on: claim no second stage rather than guess.
+  sw::portal::Probe opaque;
+  opaque.state = sw::portal::State::Captive;
+  opaque.probe_url = "http://captive.apple.com/hotspot-detect.html";
+  opaque.body = "<html><body>blocked</body></html>";
+  msg = sw::portal::explain_failed_verification(opaque, "http://172.29.250.5:30004/byod/x");
+  check(!sw::util::icontains(msg, "second authentication"),
+        "an unattributable interception is not called a second stage");
+
   // The link died outright rather than a portal appearing.
   sw::portal::Probe gone;
   gone.state = sw::portal::State::Offline;
