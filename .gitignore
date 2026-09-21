@@ -2,8 +2,10 @@ build/
 *.o
 *.dSYM/
 
-# Diagnostics dumped by `schoolwifi diagnose` -- these contain the portal's
-# raw HTML and must never be committed.
+# Diagnostics dumped by `schoolwifi diagnose`. These hold the portal's raw HTML
+# and JavaScript, and the captured URLs carry the machine's IP and MAC, so they
+# must never be committed.
+schoolwifi-diagnose-*/
 schoolwifi-portal-*.html
 
 # Local configuration may contain a username (and, if the Keychain is not
