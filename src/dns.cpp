@@ -127,8 +127,13 @@ std::vector<std::string> resolve_a(const std::string &server, const std::string 
 }
 
 bool is_resolve_failure(const std::string &curl_error) {
+  // "Resolving timed out" is libcurl reporting CURLE_OPERATION_TIMEDOUT while
+  // still in name resolution. It is what a network that blackholes traffic to
+  // a pinned public resolver produces, and it must be told apart from
+  // "Connection timed out", which happens after resolution succeeded.
   return util::icontains(curl_error, "resolve host") ||
          util::icontains(curl_error, "resolve proxy") ||
+         util::icontains(curl_error, "resolving timed out") ||
          util::icontains(curl_error, "name or service not known") ||
          util::icontains(curl_error, "nodename nor servname");
 }

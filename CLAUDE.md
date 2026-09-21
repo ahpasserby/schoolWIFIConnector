@@ -109,6 +109,13 @@ them away.
   (`dns.cpp`, libresolv with an explicit `nsaddr_list`) and pinning the answer
   via `CURLOPT_RESOLVE`. That option, like the cookie engine, is dropped by
   `curl_easy_reset()` and must be re-applied per request.
+- **Every portal-facing request, `probe()` included, goes through `fetch()`**
+  so that fallback applies. A network can block the pinned public resolver
+  outright, in which case *nothing* resolves and even the connectivity-check
+  hostnames fail — the tool then has to resolve them the way every other
+  device on that network does. Note the two distinct libcurl strings:
+  "Resolving timed out" is a DNS failure, "Connection timed out" is not, and
+  `dns::is_resolve_failure` must keep telling them apart.
 - **A network that drops traffic is not the same as one that intercepts it.**
   Dorm and campus networks sometimes blackhole the connectivity-check hosts
   entirely, so `probe()` sees only timeouts and would report Offline with no

@@ -356,6 +356,13 @@ void test_resolve_failure_detection() {
         "libcurl resolve error recognised");
   check(sw::dns::is_resolve_failure("could not resolve host"), "case-insensitive");
   check(!sw::dns::is_resolve_failure("Connection refused"), "connection error is not a resolve error");
+  // The dorm-network case: libcurl reports a timeout that happened *during*
+  // name resolution. Missing this left the DNS fallback dormant exactly where
+  // it was needed most.
+  check(sw::dns::is_resolve_failure("Resolving timed out after 6005 milliseconds"),
+        "a timeout during resolution counts as a resolve failure");
+  check(!sw::dns::is_resolve_failure("Connection timed out after 5005 milliseconds"),
+        "a timeout during connect does NOT count as a resolve failure");
   check(!sw::dns::is_resolve_failure("SSL certificate problem"), "TLS error is not a resolve error");
   check(!sw::dns::is_resolve_failure(""), "empty error is not a resolve error");
 }

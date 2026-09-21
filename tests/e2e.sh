@@ -164,6 +164,35 @@ else
   bad "wrong password surfaces the portal's own error -- $(cat "$WORK/srun-bad.log")"
 fi
 
+# ---------------------------------------------------------------------------
+# A probe host the system resolver cannot resolve must still reach the DNS
+# fallback and then the gateway fallback. Before those were wired into probe(),
+# neither was attempted and the command simply reported "offline".
+# ---------------------------------------------------------------------------
+echo ""
+echo "e2e: unresolvable probe host falls back"
+
+cat > "$WORK/unresolvable.ini" <<INI
+[network]
+interface =
+[account]
+username = 20210001
+[portal]
+probe_urls = http://schoolwifi-e2e-nonexistent.invalid/check
+probe_timeout = 3
+INI
+
+out="$("$BIN" --config "$WORK/unresolvable.ini" -v status 2>&1)"
+grep -qE "DHCP nameserver|system DNS could not resolve" <<<"$out" \
+  && ok "asks this network's DNS when the system resolver fails" \
+  || bad "asks this network's DNS when the system resolver fails"
+grep -q "trying the gateway" <<<"$out" \
+  && ok "falls back to the gateway when nothing answers" \
+  || bad "falls back to the gateway when nothing answers"
+grep -q "Portal       offline" <<<"$out" \
+  && ok "still reports offline once every fallback is exhausted" \
+  || bad "still reports offline once every fallback is exhausted"
+
 echo ""
 echo "$((pass + fail)) checks, $fail failures"
 [[ $fail -eq 0 ]]

@@ -122,11 +122,11 @@ http::Response fetch(http::Client &client, const Config &cfg, const http::Reques
   return client.send(req);
 }
 
-http::Request get_request(const std::string &url, int timeout_sec = 10) {
+http::Request get_request(const std::string &url, int timeout_sec = 10, bool follow = true) {
   http::Request req;
   req.url = url;
   req.method = "GET";
-  req.follow = true;
+  req.follow = follow;
   req.timeout_sec = timeout_sec;
   return req;
 }
@@ -209,7 +209,7 @@ bool gateway_looks_like_portal(http::Client &client, const Config &cfg, Probe *p
   std::string url = "http://" + gateway + "/";
   log::info("no check endpoint answered; trying the gateway at " + url);
 
-  http::Response resp = client.get(url, /*follow=*/false, cfg.probe_timeout);
+  http::Response resp = fetch(client, cfg, get_request(url, cfg.probe_timeout, /*follow=*/false));
   if (!resp.ok) {
     log::info("gateway did not answer either (" + resp.error + ")");
     return false;
@@ -252,7 +252,10 @@ Probe probe(http::Client &client, const Config &cfg) {
     pr.probe_url = url;
 
     // follow = false: the redirect the portal injects IS the information we want.
-    http::Response resp = client.get(url, /*follow=*/false, timeout);
+    // Through fetch() so that a network which blocks the system resolver still
+    // gets a probe: the check hostnames are then resolved via this network's
+    // own DNS, which is exactly what every other device on it does.
+    http::Response resp = fetch(client, cfg, get_request(url, timeout, /*follow=*/false));
     pr.status = resp.status;
     pr.body = resp.body;
     pr.redirects = resp.redirects;

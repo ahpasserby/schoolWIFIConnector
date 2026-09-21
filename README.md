@@ -253,8 +253,15 @@ login_url = https://w.example.edu.cn/srun_portal_pc?ac_id=1
 - `w.xxx.edu.cn` 这种内网域名 → 公共 DNS 不认识 → 解析失败，拿不到登录页
 
 `schoolwifi` 会自动处理这种情况：解析失败时，它会改用**本网络 DHCP 下发的
-DNS**（也就是校园 DNS）去解析门户域名，然后把结果直接钉给该次连接，
-不需要你改系统设置。
+DNS**（也就是校园 DNS）去解析，然后把结果直接钉给该次连接，不需要你改系统设置。
+连通性探测本身也走这条路径 —— 有些网络（比如宿舍网）认证前会把到公共 DNS
+的流量整个挡掉，这时候**所有域名都解析不了**，探测地址也不例外：
+
+```
+transport error: Resolving timed out after 6005 milliseconds
+```
+
+看到 `Resolving timed out`（而不是 `Connection timed out`）就是这个情况。
 
 用 `schoolwifi diagnose` 可以看到这个冲突：
 
