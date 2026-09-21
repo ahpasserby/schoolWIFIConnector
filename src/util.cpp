@@ -181,6 +181,11 @@ std::string url_origin(const std::string &url) {
   return slash == std::string::npos ? url : url.substr(0, slash);
 }
 
+std::string url_without_query(const std::string &url) {
+  std::size_t cut = url.find_first_of("?#");
+  return cut == std::string::npos ? url : url.substr(0, cut);
+}
+
 UrlParts parse_url(const std::string &url) {
   UrlParts parts;
   std::string rest = url;

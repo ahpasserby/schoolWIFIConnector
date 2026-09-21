@@ -25,6 +25,10 @@ std::string html_unescape(const std::string &s);
 // against `base`. Returns `ref` unchanged when it cannot be interpreted.
 std::string resolve_url(const std::string &base, const std::string &ref);
 std::string url_origin(const std::string &url);
+// The URL with its query and fragment removed. Loop detection compares these:
+// a portal that keeps appending parameters produces a different URL every time
+// while going nowhere.
+std::string url_without_query(const std::string &url);
 
 struct UrlParts {
   std::string scheme;  // lowercased, defaults to "http"

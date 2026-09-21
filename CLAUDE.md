@@ -69,6 +69,8 @@ four separable steps, each independently testable:
    302 means captive; a 200 whose body isn't the expected payload means a
    transparent proxy swapped the page, which is also captive.
 2. `resolve_login_page()` — walks up to `kMaxHops` from the intercept point,
+   and fetches the final URL if the budget runs out mid-chain, so a page that
+   was reached but never loaded can still be inspected.
    following `<meta refresh>`, then JS (`location.href=`, `top.self.location`),
    then `<iframe src>`, stopping at the first page containing a `type=password`
    input. Real portals take 2–3 hops. Loop-guarded.

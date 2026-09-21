@@ -328,7 +328,9 @@ LoginPage resolve_login_page(http::Client &client, const Config &cfg, const Prob
     page.trail.push_back("intercepted body from " + url);
   }
 
-  std::vector<std::string> seen;
+  std::vector<std::string> visited;  // origin+path of every page actually loaded
+  bool byod_tried = false;
+
   for (int hop = 0; hop < kMaxHops; ++hop) {
     if (html.empty()) {
       http::Response resp = fetch(client, cfg, get_request(url));
@@ -342,6 +344,8 @@ LoginPage resolve_login_page(http::Client &client, const Config &cfg, const Prob
       }
       html = resp.body;
     }
+
+    visited.push_back(util::url_without_query(url));
 
     for (const html::Form &f : html::extract_forms(html)) {
       if (f.has_password()) {
@@ -364,7 +368,8 @@ LoginPage resolve_login_page(http::Client &client, const Config &cfg, const Prob
       next = html::iframe_src(html);
       kind = "iframe";
     }
-    if (next.empty() && byod::looks_like_byod(url, html)) {
+    if (next.empty() && !byod_tried && byod::looks_like_byod(url, html)) {
+      byod_tried = true;
       // A BYOD shell page hides its next hop behind an API call rather than a
       // link, so ask the portal the same question its JavaScript would.
       byod::InitResult init = byod::init(client, cfg, url);
@@ -379,20 +384,35 @@ LoginPage resolve_login_page(http::Client &client, const Config &cfg, const Prob
     if (next.empty()) break;
 
     std::string resolved = util::resolve_url(url, next);
-    bool loop = resolved == url;
-    for (const std::string &s : seen) {
-      if (s == resolved) loop = true;
+    // Compare paths, not whole URLs: a portal that re-appends its parameters
+    // hands back a longer URL each time while pointing at the same page.
+    std::string resolved_path = util::url_without_query(resolved);
+    bool loop = false;
+    for (const std::string &been : visited) {
+      if (been == resolved_path) loop = true;
     }
     if (loop) {
-      page.note = "redirect loop at " + resolved;
+      page.note = "redirect loop: " + resolved_path + " was already visited";
       break;
     }
 
-    seen.push_back(url);
     page.trail.push_back(kind + ": " + resolved);
     log::info("portal hop (" + kind + "): " + resolved);
     url = resolved;
     html.clear();
+  }
+
+  // Running out of hops leaves the last URL fetched but not loaded, and a page
+  // that was never loaded cannot be inspected. Fetch it so `diagnose` has
+  // something to dump.
+  if (html.empty() && !url.empty()) {
+    http::Response resp = fetch(client, cfg, get_request(url));
+    if (resp.ok) {
+      html = resp.body;
+      if (!resp.final_url.empty()) url = resp.final_url;
+    } else if (page.note.empty()) {
+      page.note = "fetch failed: " + resp.error;
+    }
   }
 
   page.url = url;

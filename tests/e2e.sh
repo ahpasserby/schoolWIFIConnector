@@ -243,6 +243,51 @@ else
 fi
 rm -rf "$ROOT"/schoolwifi-diagnose-*
 
+kill "$PORTAL_PID" 2>/dev/null
+wait "$PORTAL_PID" 2>/dev/null
+
+# ---------------------------------------------------------------------------
+# The page the byod init call points at lives under /byod/ as well. Asking init
+# about that page returns the same page, so the tool used to loop, re-appending
+# the query on every pass until the URL was tens of kilobytes long.
+# ---------------------------------------------------------------------------
+echo ""
+echo "e2e: byod must not loop on the page init points at"
+
+LOOP_PORT=$((PORT + 3))
+python3 "$ROOT/tests/fake_portal.py" --port "$LOOP_PORT" --mode byod-loop 2>"$WORK/loop.log" &
+PORTAL_PID=$!
+for _ in $(seq 1 50); do
+  curl -s -o /dev/null "http://127.0.0.1:$LOOP_PORT/byod/index.html" && break
+  sleep 0.1
+done
+
+cat > "$WORK/loop.ini" <<INI
+[network]
+interface =
+[account]
+username = 20210001
+[portal]
+probe_urls = http://127.0.0.1:$LOOP_PORT/probe
+INI
+
+SCHOOLWIFI_PASSWORD='s3cr3t p@ss' "$BIN" --config "$WORK/loop.ini" login >"$WORK/loop-login.log" 2>&1
+init_calls=$(grep -c "byodrs/init" "$WORK/loop.log")
+if [[ "$init_calls" -eq 1 ]]; then
+  ok "byod init is called once, not once per hop"
+else
+  bad "byod init is called once, not once per hop (called $init_calls times)"
+fi
+grep -q "customId=19&customId=19" "$WORK/loop-login.log" \
+  && bad "the query string is being re-appended on every pass" \
+  || ok "the query string is not re-appended"
+grep -q "no <form> and no <input> fields" "$WORK/loop-login.log" \
+  && ok "fails with the real reason instead of exhausting the hop budget" \
+  || bad "fails with the real reason instead of exhausting the hop budget"
+
+kill "$PORTAL_PID" 2>/dev/null
+wait "$PORTAL_PID" 2>/dev/null
+
 # ---------------------------------------------------------------------------
 # A probe host the system resolver cannot resolve must still reach the DNS
 # fallback and then the gateway fallback. Before those were wired into probe(),

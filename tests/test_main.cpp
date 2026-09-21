@@ -575,6 +575,10 @@ void test_query_helpers() {
   check_eq(sw::util::query_param(url, "ssid"), "E", "last parameter");
   check_eq(sw::util::query_param(url, "wlannasid"), "", "absent parameter");
   check_eq(sw::util::query_string("http://p.cn/x"), "", "no query at all");
+  check_eq(sw::util::url_without_query(url), "http://p.cn:30004/byod/index.html",
+           "query stripped for loop comparison");
+  check_eq(sw::util::url_without_query("http://p.cn/x#frag"), "http://p.cn/x", "fragment stripped");
+  check_eq(sw::util::url_without_query("http://p.cn/x"), "http://p.cn/x", "nothing to strip");
   check_eq(sw::util::query_param("http://p.cn/x?a=b%20c", "a"), "b c", "value is percent-decoded");
 }
 
@@ -590,6 +594,16 @@ void test_byod_init() {
         "the BYOD shell is recognised");
   check(!sw::byod::looks_like_byod("http://10.0.0.1/login.jsp", "<form><input name=u></form>"),
         "an ordinary portal is not mistaken for BYOD");
+
+  // The page init sends us to also lives under /byod/ and also loads scripts
+  // from /byod/resources/byod/. Treating it as a shell made the tool ask init
+  // about it, get the same page back, and append the query again -- a loop
+  // whose URL doubled on every pass.
+  check(!sw::byod::looks_like_byod(
+            "http://172.29.250.5:30004/byod/view/byod/template/templatePc.html?customId=19",
+            "<html><body><div id=\"app\"></div>"
+            "<script src=\"/byod/resources/byod/templatePc.js\"></script></body></html>"),
+        "the page init points at is not itself treated as a shell");
 
   // index.js: url without '?' gets "?<query>&nasRedirectUrl=..."
   sw::byod::InitResult r = sw::byod::interpret_init(

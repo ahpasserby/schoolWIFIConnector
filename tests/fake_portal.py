@@ -83,7 +83,7 @@ class Portal(BaseHTTPRequestHandler):
             if state["online"]:
                 self._send(200, "<HTML><HEAD><TITLE>Success</TITLE></HEAD>"
                                 "<BODY>Success</BODY></HTML>")
-            elif state["mode"] == "byod":
+            elif state["mode"] in ("byod", "byod-loop"):
                 # A BYOD gateway hands its own parameters to the portal.
                 self._send(200, "<html><body><script>top.self.location.href="
                                 f"'http://{host}/byod/index.html?usermac=de03-2992-d0c7"
@@ -118,6 +118,21 @@ class Portal(BaseHTTPRequestHandler):
                        ctype="application/javascript")
             return
 
+        if path == "/byod/view/byod/template/templatePc.html":
+            # The page init sends us to. It lives under /byod/ and loads byod
+            # scripts, but it is NOT the bootstrap shell -- asking init about
+            # it used to return this same page again, with the query string
+            # doubling on every pass until the hop budget ran out.
+            self._send(200, '<!doctype html><html><head><title>Portal</title></head>'
+                            '<body><div id="app"></div></body>'
+                            '<script src="/byod/resources/byod/templatePc.js"></script>'
+                            '</html>')
+            return
+
+        if path == "/byod/resources/byod/templatePc.js":
+            self._send(200, "// the login form is built here", ctype="application/javascript")
+            return
+
         if path == "/byod/byodrs/init":
             # Every gateway parameter must have been forwarded, exactly as
             # index.js forwards them.
@@ -130,10 +145,13 @@ class Portal(BaseHTTPRequestHandler):
             # Relative, and carrying an absolute URL in its own query -- which
             # is what the real portal returns, and what used to be misread as
             # an absolute URL and handed to curl without a host.
+            target = ("/byod/view/byod/template/templatePc.html?customId=19"
+                      if state["mode"] == "byod-loop"
+                      else "/login?userurl=http://captive.apple.com/hotspot-detect.html")
             self._send(200,
                        '{"code":0,"msg":"","data":{"userip":"10.1.2.3",'
                        '"byodMacRegistInfo":{"wlannasid":"","shopIdE":""},'
-                       '"url":"/login?userurl=http://captive.apple.com/hotspot-detect.html"}}',
+                       f'"url":"{target}"}}}}',
                        ctype="application/json")
             return
 
@@ -275,7 +293,7 @@ class Portal(BaseHTTPRequestHandler):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--port", type=int, default=8111)
-    ap.add_argument("--mode", choices=["form", "srun", "byod"], default="form",
+    ap.add_argument("--mode", choices=["form", "srun", "byod", "byod-loop"], default="form",
                     help="form = classic HTML form portal; srun = Srun/深澜 SPA portal; "
                          "byod = Huawei-style BYOD shell that hides the login page behind an API")
     args = ap.parse_args()

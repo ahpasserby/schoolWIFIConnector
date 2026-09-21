@@ -13,11 +13,14 @@ const char *kGatewayParams[] = {"wlannasid", "usermac", "userurl", "userip", "ss
 } // namespace
 
 bool looks_like_byod(const std::string &url, const std::string &html) {
-  bool path_matches = util::icontains(url, "/byod/");
-  bool page_matches = util::icontains(html, "/byod/byodrs/") ||
-                      util::icontains(html, "/byod/resources/byod/") ||
-                      (util::icontains(html, "<title>BYOD</title>") && path_matches);
-  return path_matches && page_matches;
+  // Only the bootstrap shell, identified by the one script that performs the
+  // init call. Matching any page under /byod/ was too loose: the login page
+  // the init call sends us to lives there too, and asking init about *it*
+  // returns the same answer again, forever, with the query string doubling on
+  // every pass.
+  if (!util::icontains(url, "/byod/")) return false;
+  return util::icontains(html, "byod/resources/byod/index.js") ||
+         util::icontains(html, "/byod/byodrs/");
 }
 
 InitResult interpret_init(const std::string &raw, const std::string &page_url) {
