@@ -770,6 +770,39 @@ void test_byod_login_payload() {
   check(sw::util::icontains(plan.reason, "userPwd"), "and the refusal names userPwd");
 }
 
+void test_profile_selection() {
+  section("config::select_profile");
+
+  std::vector<sw::Profile> profiles;
+  profiles.push_back({"/c/config.ini", "CAMPUS-WIFI", "student-id", true});
+  profiles.push_back({"/c/dorm.ini", "DORM-WIFI", "campus-acct", true});
+  // Named by dorm.ini's next_stage: a later stage, never a starting point.
+  profiles.push_back({"/c/dorm-stage2.ini", "DORM-WIFI", "isp-acct", false});
+
+  std::string why;
+  check_eq(sw::select_profile(profiles, "CAMPUS-WIFI", &why), "/c/config.ini",
+           "picks the campus profile on campus");
+  check_eq(sw::select_profile(profiles, "DORM-WIFI", &why), "/c/dorm.ini",
+           "picks the dorm entry, not its second stage");
+  check_eq(sw::select_profile(profiles, "dorm-wifi", &why), "/c/dorm.ini",
+           "SSID match is case-insensitive");
+
+  check_eq(sw::select_profile(profiles, "SOMEONE-ELSE", &why), "", "an unknown SSID selects none");
+  check(sw::util::icontains(why, "no profile names"), "and says why");
+
+  check_eq(sw::select_profile(profiles, "", &why), "", "an unreadable SSID selects none");
+  check(sw::util::icontains(why, "SSID could not be read"), "and says why");
+
+  // Two entries claiming one SSID is ambiguous; guessing would log in with the
+  // wrong account.
+  std::vector<sw::Profile> clashing;
+  clashing.push_back({"/c/a.ini", "SAME", "one", true});
+  clashing.push_back({"/c/b.ini", "SAME", "two", true});
+  check_eq(sw::select_profile(clashing, "SAME", &why), "", "refuses to guess between two");
+  check(sw::util::icontains(why, "several profiles"), "and names the clash");
+  check(sw::util::icontains(why, "-c"), "and says how to resolve it");
+}
+
 void test_netenv_parsing() {
   section("netenv parsing");
 
@@ -956,6 +989,7 @@ int main() {
   test_query_helpers();
   test_byod_init();
   test_byod_login_payload();
+  test_profile_selection();
   test_netenv_parsing();
   test_chained_portal_diagnosis();
   test_form_encoding();

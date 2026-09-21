@@ -1,7 +1,9 @@
 #include "sw/config.hpp"
 
+#include <dirent.h>
 #include <sys/stat.h>
 
+#include <algorithm>
 #include <fstream>
 #include <sstream>
 
@@ -24,6 +26,75 @@ std::string default_config_path() {
   std::string home = util::home_dir();
   if (home.empty()) return "schoolwifi.ini";
   return home + "/.config/schoolwifi/config.ini";
+}
+
+std::string config_dir() { return util::dirname(default_config_path()); }
+
+std::vector<Profile> discover_profiles() {
+  std::vector<Profile> profiles;
+  std::string dir = config_dir();
+
+  DIR *handle = ::opendir(dir.c_str());
+  if (handle == nullptr) return profiles;
+
+  std::vector<std::string> paths;
+  while (dirent *entry = ::readdir(handle)) {
+    std::string name = entry->d_name;
+    if (name.size() < 5 || name.compare(name.size() - 4, 4, ".ini") != 0) continue;
+    paths.push_back(dir + "/" + name);
+  }
+  ::closedir(handle);
+  std::sort(paths.begin(), paths.end());
+
+  std::vector<std::string> later_stages;
+  for (const std::string &path : paths) {
+    Config cfg;
+    std::string err;
+    if (!load_config(path, &cfg, &err) || cfg.source_path.empty()) continue;
+
+    Profile profile;
+    profile.path = path;
+    profile.ssid = cfg.ssid;
+    profile.username = cfg.username;
+    profiles.push_back(profile);
+
+    if (!cfg.next_stage.empty()) later_stages.push_back(util::expand_tilde(cfg.next_stage));
+  }
+
+  for (Profile &profile : profiles) {
+    for (const std::string &stage : later_stages) {
+      if (stage == profile.path) profile.is_entry = false;
+    }
+  }
+  return profiles;
+}
+
+std::string select_profile(const std::vector<Profile> &profiles, const std::string &ssid,
+                           std::string *why) {
+  if (ssid.empty()) {
+    if (why) *why = "the current SSID could not be read";
+    return "";
+  }
+
+  std::vector<const Profile *> matches;
+  for (const Profile &profile : profiles) {
+    if (!profile.is_entry) continue;
+    if (util::iequals(profile.ssid, ssid)) matches.push_back(&profile);
+  }
+
+  if (matches.size() == 1) return matches[0]->path;
+  if (matches.empty()) {
+    if (why) *why = "no profile names the SSID \"" + ssid + "\"";
+    return "";
+  }
+
+  std::string listing;
+  for (const Profile *profile : matches) {
+    if (!listing.empty()) listing += ", ";
+    listing += profile->path;
+  }
+  if (why) *why = "several profiles claim \"" + ssid + "\" (" + listing + "); pick one with -c";
+  return "";
 }
 
 std::vector<std::string> effective_probe_urls(const Config &cfg) {

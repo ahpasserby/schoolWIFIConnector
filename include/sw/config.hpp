@@ -56,6 +56,25 @@ struct Config {
 };
 
 std::string default_config_path();
+// Directory the default config lives in; where profiles are looked for.
+std::string config_dir();
+
+// One configured network. A profile whose file another config names in
+// `next_stage` is a later stage, never something to start from.
+struct Profile {
+  std::string path;
+  std::string ssid;
+  std::string username;
+  bool is_entry = true;
+};
+
+// Every *.ini in the config directory, with later stages marked.
+std::vector<Profile> discover_profiles();
+
+// The profile to use on `ssid`. Returns "" and sets `why` when there is no
+// single obvious answer.
+std::string select_profile(const std::vector<Profile> &profiles, const std::string &ssid,
+                           std::string *why);
 // Returns false and fills `err` when the file exists but cannot be parsed.
 // A missing file is not an error: `out` keeps its defaults.
 bool load_config(const std::string &path, Config *out, std::string *err);

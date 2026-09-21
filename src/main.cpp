@@ -55,10 +55,12 @@ COMMANDS
   install-agent    Install the LaunchAgent so watch runs at login
   uninstall-agent  Remove the LaunchAgent
   agent-status     Show whether the LaunchAgent is loaded
+  profiles         List configured networks and show which one applies here
   version          Print the version
 
 OPTIONS
-  -c, --config PATH  Config file (default: ~/.config/schoolwifi/config.ini)
+  -c, --config PATH  Config file. Without it, the profile whose ssid matches
+                     the current network is used; see `schoolwifi profiles`
   -v, --verbose      Log every HTTP request and redirect
   -q, --quiet        Only log warnings and errors
   -h, --help         This message
@@ -179,6 +181,9 @@ int cmd_status(const sw::Config &cfg) {
   if (!link.up) std::printf("Link         %s\n", link.reason.c_str());
 
   std::printf("Config       %s\n", cfg.source_path.empty() ? "(defaults, no file)" : cfg.source_path.c_str());
+  if (!cfg.next_stage.empty()) {
+    std::printf("Next stage   %s\n", sw::util::expand_tilde(cfg.next_stage).c_str());
+  }
   return pr.state == sw::portal::State::Online ? 0 : 1;
 }
 
@@ -716,6 +721,59 @@ int cmd_setup(sw::Config cfg, const std::string &path) {
     return 1;
   }
 
+  // --- 5. An optional second authentication stage ------------------------
+  // Dorm networks commonly put a campus portal in front of an ISP one, with a
+  // different account for each. Asking here costs one keystroke and saves
+  // discovering the second layer the hard way.
+  std::string stage2_path;
+  std::string stage2_username;
+  std::printf("\n[5/5] 这个网络需要过两道认证吗？\n");
+  std::printf("      宿舍宽带常见：先过校园网，再过运营商（联通/电信/移动），两道账号不一样。\n");
+  std::printf("      校园网一般只有一道，直接回车即可。\n");
+  std::string wants_stage2 = sw::util::read_line("    > 需要第二道吗 [y/N] ", "n");
+
+  if (wants_stage2 == "y" || wants_stage2 == "Y" || wants_stage2 == "yes") {
+    // Derive the second file from the first, so the pair stays recognisable.
+    std::string base = path;
+    std::size_t dot = base.rfind('.');
+    if (dot != std::string::npos && dot > base.rfind('/')) base = base.substr(0, dot);
+    stage2_path = base + "-stage2.ini";
+
+    std::printf("\n[第二道] 账号\n");
+    std::printf("      运营商宽带账号，和上面那个不是同一个。\n");
+    stage2_username = sw::util::read_line("    > ", "");
+    if (stage2_username.empty()) {
+      std::fprintf(stderr, "\n错误：第二道的账号不能为空。\n");
+      return 2;
+    }
+
+    std::printf("\n[第二道] 密码\n");
+    std::printf("      同样存进钥匙串，用的是另一个独立条目。\n");
+    std::string stage2_password = sw::util::read_password("    > ");
+    if (stage2_password.empty()) {
+      std::fprintf(stderr, "\n错误：第二道的密码不能为空。\n");
+      return 2;
+    }
+
+    sw::Config stage2;
+    stage2.ssid = cfg.ssid;
+    stage2.interface = cfg.interface;
+    stage2.username = stage2_username;
+    stage2.keychain_service = cfg.keychain_service + "-stage2";
+    stage2.log_file = "~/Library/Logs/schoolwifi.log";
+
+    if (!sw::keychain::set_password(stage2.keychain_service, stage2.username, stage2_password,
+                                    &err)) {
+      std::fprintf(stderr, "错误：无法写入钥匙串：%s\n", err.c_str());
+      return 1;
+    }
+    if (!sw::save_config(stage2, stage2_path, &err)) {
+      std::fprintf(stderr, "错误：%s\n", err.c_str());
+      return 1;
+    }
+    cfg.next_stage = stage2_path;
+  }
+
   if (cfg.log_file.empty()) cfg.log_file = "~/Library/Logs/schoolwifi.log";
   if (!sw::save_config(cfg, path, &err)) {
     std::fprintf(stderr, "错误：%s\n", err.c_str());
@@ -732,7 +790,17 @@ int cmd_setup(sw::Config cfg, const std::string &path) {
     std::printf("  （这份配置用的是独立的钥匙串条目，不会和默认配置冲突）\n");
   }
   std::printf("  配置文件               %s\n", path.c_str());
-  std::printf("\n下一步：连上校园网后运行  schoolwifi login\n");
+  if (!stage2_path.empty()) {
+    std::printf("\n  第二道认证\n");
+    std::printf("    账号                 %s\n", stage2_username.c_str());
+    std::printf("    密码                 已存入钥匙串 (%s-stage2/%s)\n",
+                cfg.keychain_service.c_str(), stage2_username.c_str());
+    std::printf("    配置文件             %s\n", stage2_path.c_str());
+    std::printf("    （login 会在第一道过了之后自动接着跑第二道）\n");
+  }
+
+  std::printf("\n下一步：连上这个网络后直接运行  schoolwifi login\n");
+  std::printf("不用加 -c —— 它会按 SSID 自动选择这份配置。`schoolwifi profiles` 可以查看。\n");
   std::printf("如果失败，运行  schoolwifi diagnose  查看门户结构，\n");
   std::printf("并参考 docs/adapting-to-your-campus.md 填写 [portal] 段。\n");
   return 0;
@@ -810,6 +878,40 @@ int cmd_uninstall_agent() {
   return 0;
 }
 
+int cmd_profiles() {
+  std::vector<sw::Profile> profiles = sw::discover_profiles();
+  if (profiles.empty()) {
+    std::printf("No profiles in %s\n", sw::config_dir().c_str());
+    std::printf("Run `schoolwifi setup` to make one.\n");
+    return 1;
+  }
+
+  sw::wifi::Info here = sw::wifi::current("");
+  std::string why;
+  std::string chosen = sw::select_profile(profiles, here.ssid, &why);
+
+  std::printf("Profiles in %s\n\n", sw::config_dir().c_str());
+  for (const sw::Profile &profile : profiles) {
+    std::string name = profile.path;
+    std::size_t slash = name.rfind('/');
+    if (slash != std::string::npos) name = name.substr(slash + 1);
+
+    std::printf("  %s%-24s %-22s %s%s\n", profile.path == chosen ? "* " : "  ", name.c_str(),
+                profile.ssid.empty() ? "(any network)" : profile.ssid.c_str(),
+                profile.username.empty() ? "(no account)" : profile.username.c_str(),
+                profile.is_entry ? "" : "   [later stage]");
+  }
+
+  std::printf("\nCurrent SSID: %s\n", here.ssid.empty() ? "(unavailable)" : here.ssid.c_str());
+  if (chosen.empty()) {
+    std::printf("No profile selected automatically: %s\n", why.c_str());
+    std::printf("Commands will fall back to %s\n", sw::default_config_path().c_str());
+  } else {
+    std::printf("`schoolwifi login` here would use the one marked *\n");
+  }
+  return 0;
+}
+
 int cmd_agent_status() {
   std::string uid = std::to_string(static_cast<int>(::getuid()));
   std::string plist_path = agent_plist_path();
@@ -838,8 +940,28 @@ int main(int argc, char **argv) {
   if (opts.verbose) sw::log::set_level(sw::log::Level::Debug);
   if (opts.quiet) sw::log::set_level(sw::log::Level::Warn);
 
-  std::string config_path =
-      opts.config_path.empty() ? sw::default_config_path() : opts.config_path;
+  // With no -c, pick the profile whose ssid matches the network we are on, so
+  // one command works in the dorm and on campus without the user remembering
+  // which file belongs where.
+  std::string config_path = opts.config_path;
+  bool auto_selected = false;
+  if (config_path.empty()) {
+    const std::string &cmd_name = opts.args[0];
+    bool wants_a_network = cmd_name == "login" || cmd_name == "status" ||
+                           cmd_name == "diagnose" || cmd_name == "watch" || cmd_name == "open" ||
+                           cmd_name == "logout";
+    if (wants_a_network) {
+      sw::wifi::Info here = sw::wifi::current("");
+      std::string why;
+      config_path = sw::select_profile(sw::discover_profiles(), here.ssid, &why);
+      if (config_path.empty()) {
+        sw::log::debug("profile auto-selection: " + why);
+      } else {
+        auto_selected = true;
+      }
+    }
+  }
+  if (config_path.empty()) config_path = sw::default_config_path();
 
   sw::Config cfg;
   std::string err;
@@ -849,6 +971,7 @@ int main(int argc, char **argv) {
   }
 
   const std::string &cmd = opts.args[0];
+  if (auto_selected) sw::log::info("using profile " + config_path + " for this network");
 
   // `watch` is the only command that runs unattended, so it is the only one
   // that writes to the log file by default.
@@ -872,6 +995,7 @@ int main(int argc, char **argv) {
   if (cmd == "install-agent") return cmd_install_agent(cfg);
   if (cmd == "uninstall-agent") return cmd_uninstall_agent();
   if (cmd == "agent-status") return cmd_agent_status();
+  if (cmd == "profiles") return cmd_profiles();
 
   std::fprintf(stderr, "error: unknown command \"%s\"\n\n", cmd.c_str());
   print_usage();

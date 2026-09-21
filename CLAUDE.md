@@ -186,6 +186,15 @@ them away.
   `setup` wizard's prompts are in Chinese — that is who runs them. Code,
   comments, commit messages and diagnostic output (`status`, `login`, log
   lines) stay in English.
+- With no `-c`, `main` picks the profile whose `ssid` matches the current
+  network (`select_profile`), so one command works everywhere. A config named
+  by another's `next_stage` is a later stage and is excluded from selection —
+  otherwise a dorm's two files would both claim the same SSID. Two entry
+  profiles claiming one SSID is reported, never guessed: the wrong pick submits
+  the wrong account.
+- `setup` asks whether the network needs a second stage and, if so, writes both
+  configs and wires `next_stage` in one pass. Discovering a dorm's second layer
+  after the fact cost several trips to find out.
 - `setup` derives `keychain_service` from the filename when writing anywhere
   but the default config path, so a second profile (a second network needing
   different credentials) cannot overwrite the first one's stored password.
