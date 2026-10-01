@@ -251,6 +251,12 @@ class Portal(BaseHTTPRequestHandler):
               </form></body></html>''')
             return
 
+        if path == "/test-reset":
+            state["online"] = False
+            state["stage1"] = False
+            self._send(200, "reset")
+            return
+
         if path == "/logout":
             state["online"] = False
             self._send(200, "<html><body>logged out</body></html>")

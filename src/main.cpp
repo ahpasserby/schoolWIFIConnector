@@ -2,6 +2,7 @@
 #include <signal.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cctype>
 #include <cstdio>
@@ -25,7 +26,7 @@
 
 namespace {
 
-constexpr const char *kVersion = "0.1.0";
+constexpr const char *kVersion = "0.2.0";
 constexpr const char *kAgentLabel = "com.ahpasserby.schoolwifi";
 
 volatile sig_atomic_t g_stop = 0;
@@ -51,7 +52,7 @@ COMMANDS
   open             Open the real portal page in your browser (manual fallback)
   watch            Stay resident and log in whenever the portal reappears
   diagnose         Dump portal discovery details to help write a config
-  setup            Interactive first-run configuration
+  setup            Register or update the currently visible authentication step
   install-agent    Install the LaunchAgent so watch runs at login
   uninstall-agent  Remove the LaunchAgent
   agent-status     Show whether the LaunchAgent is loaded
@@ -66,7 +67,7 @@ OPTIONS
   -h, --help         This message
 
 ENVIRONMENT
-  SCHOOLWIFI_PASSWORD  Password to use instead of the Keychain entry
+  SCHOOLWIFI_PASSWORD  Password override for explicit legacy configs only
 )",
               kVersion);
 }
@@ -181,6 +182,7 @@ int cmd_status(const sw::Config &cfg) {
   if (!link.up) std::printf("Link         %s\n", link.reason.c_str());
 
   std::printf("Config       %s\n", cfg.source_path.empty() ? "(defaults, no file)" : cfg.source_path.c_str());
+  if (cfg.network_profile) std::printf("Stages       %zu\n", cfg.stages.size());
   if (!cfg.next_stage.empty()) {
     std::printf("Next stage   %s\n", sw::util::expand_tilde(cfg.next_stage).c_str());
   }
@@ -271,6 +273,203 @@ int cmd_login(const sw::Config &cfg, int stage = 1) {
   return 1;
 }
 
+// Network profiles bind credentials to the currently observed portal, rather
+// than assuming that the first authentication stage always needs to run.
+
+int network_login(sw::Config cfg, bool interactive, bool edit = false) {
+  sw::http::Client client;
+  make_client(&client, cfg);
+  std::vector<std::string> attempted;
+  for (int step = 0; step < 16; ++step) {
+    if (!cfg.ssid.empty()) {
+      const auto here = sw::wifi::current(cfg.interface);
+      if (here.ssid != cfg.ssid) {
+        sw::log::error("Wi-Fi changed or its name is unavailable; no credentials sent"); return 2;
+      }
+    }
+    auto pr = sw::portal::probe(client, cfg);
+    if (pr.state == sw::portal::State::Online) {
+      sw::log::info("connected: verified online");
+      if (edit) std::printf("当前已经联网，无需登记；下次出现认证页面时运行 schoolwifi login。\n");
+      return 0;
+    }
+    if (pr.state != sw::portal::State::Captive) {
+      sw::log::error("no reachable portal; check Wi-Fi and run schoolwifi diagnose"); return 1;
+    }
+    auto page = sw::portal::resolve_login_page(client, cfg, pr);
+    const auto identity = sw::portal::stage_identity(page);
+    if (identity.empty()) {
+      sw::log::error("unrecognized portal; run schoolwifi diagnose or use schoolwifi open"); return 1;
+    }
+    if (std::find(attempted.begin(), attempted.end(), identity) != attempted.end()) {
+      sw::log::error("portal repeated after authentication; stopping instead of retrying credentials");
+      return 1;
+    }
+    int selected = -1;
+    for (std::size_t i = 0; i < cfg.stages.size(); ++i) {
+      if (cfg.stages[i].portal_match == identity) {
+        if (selected >= 0) { sw::log::error("multiple stages match this portal; fix the profile"); return 2; }
+        selected = static_cast<int>(i);
+      }
+    }
+    bool enrolled = false;
+    if (selected < 0 || edit) {
+      if (!interactive) {
+        sw::log::error("this portal is not enrolled; run schoolwifi login in an interactive terminal");
+        return 2;
+      }
+      std::printf("\n网络：%s\n认证页面：%s\n地址：%s\n", cfg.ssid.c_str(),
+                  sw::html::title(page.html).c_str(), sw::util::url_origin(page.url).c_str());
+      if (selected < 0) {
+        std::printf("需要登记这一道认证。只填写这个登录页面所需的账号。\n");
+        std::vector<int> choices;
+        for (std::size_t i = 0; i < cfg.stages.size(); ++i) {
+          if (cfg.stages[i].portal_match.empty()) {
+            choices.push_back(static_cast<int>(i));
+            std::printf("  %zu. 使用已有账号 %s\n", choices.size(), cfg.stages[i].username.c_str());
+          }
+        }
+        if (!choices.empty()) {
+          auto answer = sw::util::read_line("选择已有账号的编号，或输入 new 登记新账号（回车取消）： ");
+          if (answer.empty()) return 2;
+          if (answer != "new") {
+            if (answer.find_first_not_of("0123456789") != std::string::npos || answer.size() > 2 ||
+                std::stoi(answer) < 1 || std::stoi(answer) > static_cast<int>(choices.size())) {
+              sw::log::error("invalid choice; nothing saved"); return 2;
+            }
+            selected = choices[std::stoi(answer) - 1];
+          }
+        }
+      }
+      if (selected < 0 || edit) {
+        if (selected < 0) {
+          if (cfg.stages.size() >= 16) { sw::log::error("too many authentication stages"); return 2; }
+          cfg.stages.emplace_back();
+          selected = static_cast<int>(cfg.stages.size() - 1);
+        }
+        auto &stage = cfg.stages[selected];
+        auto username = sw::util::read_line("账号（回车取消）： ");
+        if (username.empty() || username.find_first_of("\r\n") != std::string::npos) return 2;
+        auto password = sw::util::read_password("密码（不显示，回车取消）： ");
+        if (password.empty()) return 2;
+        stage.username = username;
+        stage.keychain_service = "schoolwifi/network/" + sw::util::url_encode(cfg.ssid) +
+                                 "/stage/" + std::to_string(selected + 1);
+        std::string err;
+        if (!sw::keychain::set_password(stage.keychain_service, username, password, &err)) {
+          sw::log::error(err); return 2;
+        }
+      }
+      auto &stage = cfg.stages[selected];
+      stage.portal_match = identity;
+      // Keep legacy custom protocol settings; discovery reuses the observed page.
+      if (stage.login_method == "raw") {
+        sw::log::error("legacy raw requests require explicit -c; cannot bind automatically"); return 2;
+      }
+      stage.login_method = identity.rfind("srun ", 0) == 0 ? "srun" : "form";
+      stage.password.clear(); stage.next_stage.clear();
+      std::string err;
+      if (!sw::save_config(cfg, cfg.source_path, &err)) { sw::log::error(err); return 2; }
+      std::printf("已保存到 %s；密码保存在钥匙串。\n", cfg.source_path.c_str());
+      edit = false;
+      enrolled = true;
+    }
+    if (enrolled) {
+      pr = sw::portal::probe(client, cfg);
+      if (pr.state == sw::portal::State::Online) { sw::log::info("connected: verified online"); return 0; }
+      if (pr.state != sw::portal::State::Captive) return 1;
+      page = sw::portal::resolve_login_page(client, cfg, pr);
+      if (sw::portal::stage_identity(page) != identity) {
+        sw::log::error("portal changed during enrollment; run login again"); return 1;
+      }
+    }
+    sw::Config stage = cfg.stages[selected];
+    stage.ssid = cfg.ssid; stage.interface = cfg.interface;
+    stage.dns_server = cfg.dns_server; stage.probe_urls = cfg.probe_urls;
+    stage.probe_timeout = cfg.probe_timeout;
+    if (stage.login_method == "raw") { sw::log::error("raw stages require explicit legacy config"); return 2; }
+    std::string password, err;
+    if (!resolve_password(stage, &password, &err, /*allow_env=*/false)) {
+      sw::log::error("no password for this stage; run schoolwifi setup to update this portal's account"); return 2;
+    }
+    // Recheck association after an interactive prompt; never submit on a changed SSID.
+    if (!cfg.ssid.empty() && sw::wifi::current(cfg.interface).ssid != cfg.ssid) {
+      sw::log::error("Wi-Fi changed while registering; please retry on the intended network"); return 2;
+    }
+    attempted.push_back(identity);
+    sw::log::info("using authentication stage " + std::to_string(selected + 1));
+    client.set_user_agent(sw::effective_user_agent(stage));
+    auto result = sw::portal::login(client, stage, password, &pr, &page);
+    if (result.success) { sw::log::info("connected: " + result.message); return 0; }
+    // Re-discover even for same-host stage transitions; no credential guessing.
+    auto after = sw::portal::probe(client, cfg);
+    if (after.state == sw::portal::State::Online) { sw::log::info("connected: verified online"); return 0; }
+    if (after.state == sw::portal::State::Captive) {
+      auto next = sw::portal::resolve_login_page(client, cfg, after);
+      auto next_id = sw::portal::stage_identity(next);
+      if (!next_id.empty() && next_id != identity) continue;
+    }
+    sw::log::error("login failed: " + result.message + "; use schoolwifi setup to update this account");
+    return 1;
+  }
+  sw::log::error("too many portal transitions"); return 1;
+}
+
+int automatic_login(bool interactive, bool edit = false) {
+  auto info = sw::wifi::current("");
+  if (!info.power_on || info.ssid.empty()) {
+    sw::log::error("connect to Wi-Fi first; its name must be readable before automatic login"); return 2;
+  }
+  if (info.ssid.find_first_of("\r\n") != std::string::npos) {
+    sw::log::error("Wi-Fi name contains unsupported line breaks"); return 2;
+  }
+  auto profiles = sw::discover_profiles();
+  std::string why, err;
+  auto path = sw::select_profile(profiles, info.ssid, &why);
+  if (path.empty()) {
+    std::vector<std::string> choices;
+    for (const auto &profile : profiles) {
+      if (profile.is_entry && profile.ssid == info.ssid) choices.push_back(profile.path);
+    }
+    if (!choices.empty()) {
+      if (!interactive) {
+        sw::log::error(why + "; run schoolwifi login in a terminal to choose a profile");
+        return 2;
+      }
+      std::printf("这个 WiFi 有多份已保存配置，请选择这次使用哪一份。原文件都会保留。\n");
+      for (std::size_t i = 0; i < choices.size(); ++i) {
+        sw::Config candidate;
+        std::string load_error;
+        sw::load_config(choices[i], &candidate, &load_error);
+        std::printf("  %zu. %s%s\n", i + 1, choices[i].c_str(),
+                    candidate.network_profile ? "（新网络配置）" :
+                    candidate.next_stage.empty() ? "（旧单道配置）" : "（旧配置，包含后续认证）");
+      }
+      const auto answer = sw::util::read_line("输入编号（回车取消）： ");
+      if (answer.empty()) return 2;
+      if (answer.size() > 6 || answer.find_first_not_of("0123456789") != std::string::npos ||
+          std::stoul(answer) < 1 || std::stoul(answer) > choices.size()) {
+        sw::log::error("invalid choice; nothing changed"); return 2;
+      }
+      path = choices[std::stoul(answer) - 1];
+    }
+  }
+  sw::Config cfg;
+  if (!path.empty() && !sw::load_config(path, &cfg, &err)) { sw::log::error(err); return 2; }
+  cfg.ssid = info.ssid; cfg.interface = info.interface;
+  if (!cfg.network_profile && !sw::consolidate_network_config(&cfg, &err)) { sw::log::error(err); return 2; }
+  return network_login(cfg, interactive, edit);
+}
+
+int automatic_watch() {
+  ::signal(SIGINT, on_signal); ::signal(SIGTERM, on_signal);
+  while (!g_stop) {
+    automatic_login(false);
+    for (int i = 0; i < 30 && !g_stop; ++i) std::this_thread::sleep_for(std::chrono::seconds(1));
+  }
+  return 0;
+}
+
 int cmd_logout(const sw::Config &cfg) {
   sw::http::Client client;
   make_client(&client, cfg);
@@ -311,9 +510,21 @@ int cmd_open(const sw::Config &cfg) {
 }
 
 int cmd_watch(const sw::Config &cfg) {
+  if (cfg.network_profile) {
+    ::signal(SIGINT, on_signal); ::signal(SIGTERM, on_signal);
+    while (!g_stop) {
+      sw::Config live; std::string err;
+      if (!sw::load_config(cfg.source_path, &live, &err) || live.source_path.empty()) {
+        sw::log::error("could not reload network profile"); return 2;
+      }
+      network_login(live, false);
+      for (int i = 0; i < cfg.online_interval && !g_stop; ++i)
+        std::this_thread::sleep_for(std::chrono::seconds(1));
+    }
+    return 0;
+  }
   if (cfg.username.empty()) {
-    sw::log::error("no username configured; run `schoolwifi setup`");
-    return 2;
+    sw::log::error("no username configured; run `schoolwifi setup`"); return 2;
   }
 
   ::signal(SIGINT, on_signal);
@@ -382,7 +593,7 @@ int cmd_watch(const sw::Config &cfg) {
   return 0;
 }
 
-int cmd_diagnose(const sw::Config &cfg) {
+int cmd_diagnose(sw::Config cfg) {
   sw::wifi::Info info = sw::wifi::current(cfg.interface);
   sw::http::Client client;
   make_client(&client, cfg);
@@ -470,6 +681,26 @@ int cmd_diagnose(const sw::Config &cfg) {
   std::printf("login page: %s\n", page.url.c_str());
   std::printf("page title: %s\n", sw::html::title(page.html).c_str());
 
+  bool submission_known = true;
+  if (cfg.network_profile) {
+    const auto identity = sw::portal::stage_identity(page);
+    int selected = -1;
+    for (std::size_t i = 0; i < cfg.stages.size(); ++i) {
+      if (!identity.empty() && cfg.stages[i].portal_match == identity) {
+        if (selected >= 0) { selected = -2; break; }
+        selected = static_cast<int>(i);
+      }
+    }
+    std::printf("stage identity: %s\n", identity.empty() ? "(unrecognized)" : identity.c_str());
+    submission_known = selected >= 0;
+    if (submission_known) {
+      auto stage = cfg.stages[selected];
+      stage.interface = cfg.interface; stage.dns_server = cfg.dns_server;
+      stage.probe_urls = cfg.probe_urls; stage.probe_timeout = cfg.probe_timeout;
+      cfg = stage;
+      std::printf("matched stage: %d\n", selected + 1);
+    }
+  }
   std::printf("\n== forms ==\n");
   std::vector<sw::html::Form> forms = sw::html::extract_forms(page.html);
   if (forms.empty()) std::printf("  (none found)\n");
@@ -516,7 +747,9 @@ int cmd_diagnose(const sw::Config &cfg) {
   // reported a failure for pages that login handles perfectly well through an
   // API, which reads as a problem that is not there.
   std::string origin = sw::util::url_origin(page.url);
-  if (sw::byod::looks_like_login_page(page.url, page.html)) {
+  if (!submission_known) {
+    std::printf("  No unique registered stage matches; login will request enrollment, not submit credentials.\n");
+  } else if (sw::byod::looks_like_login_page(page.url, page.html)) {
     std::printf("  POST %s/byod/byodrs/login/defaultLogin   (JSON, not the form)\n",
                 origin.c_str());
     std::printf("      userName        = %s\n",
@@ -896,16 +1129,23 @@ int cmd_profiles() {
     std::size_t slash = name.rfind('/');
     if (slash != std::string::npos) name = name.substr(slash + 1);
 
+    sw::Config detail; std::string err;
+    sw::load_config(profile.path, &detail, &err);
+    if (detail.network_profile) {
+      std::printf("  %s%s  [%s]  %zu authentication stages\n", profile.path == chosen ? "* " : "  ",
+                  profile.path.c_str(), profile.ssid.c_str(), detail.stages.size());
+      continue;
+    }
     std::printf("  %s%-24s %-22s %s%s\n", profile.path == chosen ? "* " : "  ", name.c_str(),
                 profile.ssid.empty() ? "(any network)" : profile.ssid.c_str(),
                 profile.username.empty() ? "(no account)" : profile.username.c_str(),
-                profile.is_entry ? "" : "   [later stage]");
+                profile.is_entry ? "   [legacy]" : "   [later stage / superseded legacy]");
   }
 
   std::printf("\nCurrent SSID: %s\n", here.ssid.empty() ? "(unavailable)" : here.ssid.c_str());
   if (chosen.empty()) {
     std::printf("No profile selected automatically: %s\n", why.c_str());
-    std::printf("Commands will fall back to %s\n", sw::default_config_path().c_str());
+    std::printf("Run schoolwifi login in a terminal to register this network when a portal appears.\n");
   } else {
     std::printf("`schoolwifi login` here would use the one marked *\n");
   }
@@ -939,6 +1179,13 @@ int main(int argc, char **argv) {
 
   if (opts.verbose) sw::log::set_level(sw::log::Level::Debug);
   if (opts.quiet) sw::log::set_level(sw::log::Level::Warn);
+
+  const auto &requested = opts.args[0];
+  if (opts.config_path.empty()) {
+    if (requested == "login" || requested == "setup")
+      return automatic_login(::isatty(STDIN_FILENO), requested == "setup");
+    if (requested == "watch") return automatic_watch();
+  }
 
   // With no -c, pick the profile whose ssid matches the network we are on, so
   // one command works in the dorm and on campus without the user remembering
@@ -986,13 +1233,16 @@ int main(int argc, char **argv) {
     return 0;
   }
   if (cmd == "status") return cmd_status(cfg);
-  if (cmd == "login") return cmd_login(cfg);
+  if (cmd == "login") return cfg.network_profile ? network_login(cfg, ::isatty(STDIN_FILENO)) : cmd_login(cfg);
   if (cmd == "logout") return cmd_logout(cfg);
   if (cmd == "open") return cmd_open(cfg);
   if (cmd == "watch") return cmd_watch(cfg);
   if (cmd == "diagnose") return cmd_diagnose(cfg);
-  if (cmd == "setup") return cmd_setup(cfg, config_path);
-  if (cmd == "install-agent") return cmd_install_agent(cfg);
+  if (cmd == "setup") return cfg.network_profile ? network_login(cfg, ::isatty(STDIN_FILENO), true) : cmd_setup(cfg, config_path);
+  if (cmd == "install-agent") {
+    if (opts.config_path.empty()) cfg.source_path.clear();
+    return cmd_install_agent(cfg);
+  }
   if (cmd == "uninstall-agent") return cmd_uninstall_agent();
   if (cmd == "agent-status") return cmd_agent_status();
   if (cmd == "profiles") return cmd_profiles();

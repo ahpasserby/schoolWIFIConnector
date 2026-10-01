@@ -670,10 +670,32 @@ void judge(http::Client &client, const Config &cfg, const http::Response &resp, 
 
 } // namespace
 
-LoginResult login(http::Client &client, const Config &cfg, const std::string &password) {
+std::string stage_identity(const LoginPage &page) {
+  std::string method, url = page.url;
+  if (byod::looks_like_login_page(page.url, page.html)) method = "byod";
+  else if (srun::looks_like_srun(page.url, page.html)) method = "srun";
+  else {
+    Config cfg;
+    auto plan = plan_form_login(cfg, page, "account", "password");
+    if (!plan.ok) return "";
+    method = "form";
+    url = plan.action_url;
+  }
+  auto parts = util::parse_url(url);
+  if (parts.host.empty() || (parts.scheme != "http" && parts.scheme != "https")) return "";
+  auto clean = util::url_without_query(url);
+  auto start = clean.find("://");
+  if (start == std::string::npos) return "";
+  auto slash = clean.find('/', start + 3);
+  auto path = slash == std::string::npos ? "/" : clean.substr(slash);
+  return method + " " + parts.scheme + "://" + util::lower(parts.host) + ":" + parts.port + path;
+}
+
+LoginResult login(http::Client &client, const Config &cfg, const std::string &password,
+                  const Probe *observed, const LoginPage *discovered) {
   LoginResult result;
 
-  Probe pr = probe(client, cfg);
+  Probe pr = observed ? *observed : probe(client, cfg);
   if (pr.state == State::Online) {
     result.success = true;
     result.message = "already online, nothing to do";
@@ -718,7 +740,7 @@ LoginResult login(http::Client &client, const Config &cfg, const std::string &pa
     return result;
   }
 
-  LoginPage page = resolve_login_page(client, cfg, pr);
+  LoginPage page = discovered ? *discovered : resolve_login_page(client, cfg, pr);
   if (page.html.empty()) {
     result.message = "could not load the portal page";
     if (!page.note.empty()) result.message += ": " + page.note;

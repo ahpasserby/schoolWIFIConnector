@@ -10,6 +10,10 @@ namespace sw {
 // Loaded from an INI-style file; every field has a usable default so a minimal
 // config is just `username` plus (optionally) an `ssid` guard.
 struct Config {
+  bool network_profile = false;  // v2: one SSID, multiple portal-bound stages
+  std::string portal_match;      // method + normalized origin/path, no session query
+  std::vector<Config> stages;
+
   // [network]
   std::string ssid;               // when set, login/watch only act on this SSID
   std::string interface = "en0";  // Wi-Fi interface to inspect and bind to
@@ -58,6 +62,9 @@ struct Config {
 std::string default_config_path();
 // Directory the default config lives in; where profiles are looked for.
 std::string config_dir();
+std::string network_config_path(const std::string &ssid);
+// In-memory migration; preserves old files and Keychain references.
+bool consolidate_network_config(Config *cfg, std::string *err);
 
 // One configured network. A profile whose file another config names in
 // `next_stage` is a later stage, never something to start from.

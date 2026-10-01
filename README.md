@@ -28,105 +28,83 @@ INFO  connected: verified online
 
 ## 快速开始
 
-三步，从零到能用。
+**安装好以后，只记住一条命令：**
 
-**1. 编译安装**
+```bash
+schoolwifi login
+```
+
+连上校园或宿舍 WiFi 后运行它：已经能上网就直接结束；需要认证时，已登记的网络会自动登录，陌生网络会在终端引导你登记。
+
+### 第一次安装
+
+先保持网络可用（例如连接手机热点），打开 Mac 的「终端」，逐行运行：
 
 ```bash
 git clone https://github.com/ahpasserby/schoolWIFIConnector.git
 cd schoolWIFIConnector
-make && sudo make install
+make
+sudo make install
 ```
 
-只需要 Xcode Command Line Tools（`xcode-select --install`）。
-不用装 CMake、Homebrew 或任何第三方库。不想装到系统目录就直接用 `./build/schoolwifi`。
+`sudo` 要输入的是 **Mac 登录密码**，输入时屏幕不显示字符，输完按回车。如果提示缺少开发工具，运行 `xcode-select --install`，完成后重试。
+已有旧版本时，在更新后的源码目录运行 `make` 和 `sudo make install`。
 
-**2. 连上要配置的 WiFi，然后跑配置向导**
+### 第一次连接一个网络
 
-```bash
-schoolwifi setup
-```
+1. 在 Mac 的 WiFi 菜单连接目标网络，即使暂时不能上网也没关系。
+2. 运行 `schoolwifi login`。
+3. 工具会显示当前网络和认证入口。输入**这个登录页面需要的账号和密码**；密码输入时不显示。
+4. 如果出现另一道认证，继续填写那一道的账号密码。看到 `connected: verified online` 就完成了。
 
-会问五个问题：**WiFi 名称、网卡名、账号、密码，以及这个网络要不要过两道认证**。
-网卡名直接回车用 `en0`。密码存进 macOS 钥匙串，不会写进配置文件。
+不用填网卡名，不用选择配置文件，也不用提前知道有几道认证。普通表单、深澜和支持的华为 BYOD 页面会自动识别。识别不了的页面会提示诊断，不会盲目提交密码。
 
-第五个问题是给**宿舍宽带**准备的——那种「先过校园网、再过运营商」的网络。
-选 `y` 会接着问第二道的账号密码，两道一次配完，`login` 时自动串起来：
+**密码保存在 macOS 钥匙串。** 每个 WiFi 的配置保存在 `~/.config/schoolwifi/networks/网络名称.ini`，其中记录该网络所有已登记的认证步骤。
 
-```
-[5/5] 这个网络需要过两道认证吗？
-      宿舍宽带常见：先过校园网，再过运营商（联通/电信/移动），两道账号不一样。
-      校园网一般只有一道，直接回车即可。
-    > 需要第二道吗 [y/N] y
-```
+### 以后连接，以及在教室和宿舍之间切换
 
-**3. 登录**
+连上 WiFi，运行：
 
 ```bash
 schoolwifi login
 ```
 
-看到 `connected: verified online` 就成了。
+工具按当前 **WiFi 名称精确匹配（区分大小写）**选择配置，再按当前出现的认证门户选择账号。例如校园认证仍有效、只剩宽带认证时，会直接使用已登记的宽带账号。
 
-### 在教室和宿舍之间切换
+首次登记时已经通过的认证步骤可能暂时看不到。以后它再次出现，工具会提示补充登记，仍保存在同一份网络配置里。
 
-**每个网络各跑一次 `setup` 就行**，之后不用再管用哪份配置：
+### 我已经用旧版配置过了
 
-```bash
-# 在教学楼，连上校园网
-schoolwifi setup          # 第五问回车（只有一道认证）
+旧的 `config.ini`、`config-stage2.ini` 和钥匙串密码都会保留。直接运行 `schoolwifi login`：第一次遇到尚未绑定的认证门户时，选择对应的已有账号编号，或输入 `new` 登记新账号。**不要凭编号猜测：校园页面选校园账号，宽带页面选宽带账号。**
 
-# 在宿舍，连上宿舍宽带
-schoolwifi setup          # 第五问选 y，接着填运营商账号
-```
+确认后保存为新的网络配置，下次自动匹配，不需要再手动调用 `config-stage2.ini`。如果当前已经联网，不会为了迁移而要求重新认证。
 
-两份配置会按各自的 SSID 存好。之后**在哪都是同一条命令**：
+同一个 WiFi 有多份旧入口配置时，终端会列出候选文件及是否包含后续认证，让你选择一次，再继续登记。原文件保留，新网络配置保存后优先使用。后台遇到冲突会提示你在终端选择，不会猜测。旧配置含明文密码或自定义 raw 请求时，保留使用 `-c` 的高级方式，不自动迁移。
 
-```bash
-schoolwifi login
-```
+### 换密码、查看配置或排查
 
-它按当前连的 WiFi 自动选对应的配置——在教学楼走校园网那套，在宿舍自动过完两道。
-想看配了哪些网络：
+| 想做什么 | 命令 |
+| --- | --- |
+| 修改当前认证页面使用的账号密码 | `schoolwifi setup`（需要当前仍能看到认证页面） |
+| 看登记了哪些网络、各有几道认证 | `schoolwifi profiles` |
+| 看是否已联网 | `schoolwifi status` |
+| 没连上，查看原因 | `schoolwifi diagnose` |
+| 改用浏览器手动登录 | `schoolwifi open` |
 
-```bash
-$ schoolwifi profiles
-Profiles in /Users/you/.config/schoolwifi
+不能读取 WiFi 名称时，工具会提示处理，不会使用别的网络的账号。登记必须在交互式终端完成，后台任务不会停下来等待输入。
 
-  * dorm.ini                 DORM-WIFI              campus-acct
-    dorm-stage2.ini          DORM-WIFI              isp-acct       [later stage]
-    config.ini               CAMPUS-WIFI            student-id
+### 可选：登录 Mac 后自动连接
 
-Current SSID: DORM-WIFI
-`schoolwifi login` here would use the one marked *
-```
-
-标着 `[later stage]` 的是第二道认证的配置，由第一道自动调用，不用手动选。
-
-到这里就能用了。想让它**开机自启、掉线自动重连**，再加一条：
+手动登录正常后运行：
 
 ```bash
 schoolwifi install-agent
 ```
 
-装完就不用管了：开机自动运行，检测到被门户拦截就自动认证。
-日志在 `~/Library/Logs/schoolwifi.log`。
+后台每隔约 30 秒重新识别网络，使用对应配置登录。遇到陌生网络或未登记步骤会记录提示，等你在终端运行 `schoolwifi login` 补齐。旧版已装过后台任务的，也请重新运行一次这条命令，以改用新的自动选择模式。
 
-### 没连上怎么办
+不想使用时运行 `schoolwifi uninstall-agent`。日志位于 `~/Library/Logs/schoolwifi.log`。
 
-按顺序试这三步，基本能定位：
-
-```bash
-schoolwifi diagnose    # 打印探测全过程，多数问题看一眼就知道
-schoolwifi -v login    # 打印每个 HTTP 请求和跳转
-schoolwifi open        # 保底方案：直接用浏览器打开真正的登录页
-```
-
-`schoolwifi open` 单独就能解决「页面弹不出来」——它绕过那个坏掉的系统小窗，
-把真正的登录页交给 Safari/Chrome。
-
-常见原因见 [常见问题](#常见问题)；要给自己学校调配置见
-[适配你自己学校的校园网](docs/adapting-to-your-campus.md)。
 
 ---
 
@@ -135,7 +113,7 @@ schoolwifi open        # 保底方案：直接用浏览器打开真正的登录�
 | 章节 | 内容 |
 | --- | --- |
 | [命令](#命令) | 每个子命令分别干什么 |
-| [在教室和宿舍之间切换](#在教室和宿舍之间切换) | 多个网络各配一次，之后一条命令通用 |
+| [在教室和宿舍之间切换](#以后连接以及在教室和宿舍之间切换) | 不同网络分别保存配置，登录时自动选择 |
 | [配置项说明](#配置项说明) | 配置文件每一项的含义、默认值、什么时候需要改 |
 | [支持的门户类型](#支持的门户类型) | 普通表单 / 深澜 Srun / API 式门户 |
 | [常见问题](#常见问题) | DNS 解析失败、代理干扰、登录没反应 |
@@ -155,7 +133,7 @@ schoolwifi open        # 保底方案：直接用浏览器打开真正的登录�
 | `open` | **用默认浏览器打开真正的登录页** —— 这就是那个弹不出来的窗口 |
 | `watch` | 常驻前台，检测到门户就自动登录（LaunchAgent 跑的就是它） |
 | `diagnose` | 打印门户探测的全过程，用来给自己学校写配置 |
-| `setup` | 交互式生成配置 + 写入钥匙串（可一次配完两道认证） |
+| `setup` | 登记或更新当前门户对应的账号和钥匙串密码 |
 | `profiles` | 列出配好的网络，并显示当前这个网络会用哪一份 |
 | `install-agent` / `uninstall-agent` / `agent-status` | 管理开机自启 |
 
@@ -167,34 +145,46 @@ SSID 配了多份、或者想临时跑某一份时才用得上。
 
 ## 配置项说明
 
-### `schoolwifi setup` 会问的五个问题
+### 一个网络一份配置
 
-| 提示 | 对应配置项 | 该填什么 | 例子 |
-| --- | --- | --- | --- |
-| 校园网 WiFi 名称 | `ssid` | 校园网的 **WiFi 名称**，就是 Mac 右上角 WiFi 菜单里显示的那个名字。直接回车 = 用当前已连接的那个。填 `any` = 不限制网络 | `CAMPUS-WIFI` |
-| 无线网卡名 | `interface` | **网卡名，不是 WiFi 名称。** Mac 上几乎永远是 `en0`，直接回车就行 | `en0` |
-| 校园网账号 | `username` | 学号 / 校园网账号，就是你在网页认证页面里填的那个 | `20210001` |
-| 校园网密码 | （不写入配置） | 网页认证时填的密码。输入时不回显，存进 macOS 登录钥匙串 | |
-| 需要第二道吗 | `next_stage` | 宿舍宽带那种「先校园网、再运营商」的网络选 `y`，接着填第二道的账号密码；校园网直接回车 | `N` |
+新格式保存在 `~/.config/schoolwifi/networks/`，正常 WiFi 名称直接作为文件名。
+`/`、`%`、点号等特殊字符进行百分号编码，完整 WiFi 名称保存在文件内部。
+现有目标文件不属于当前配置时拒绝覆盖。相同名称的不同地点 WiFi 无法仅凭 SSID 区分，遇到新门户需要登记。
 
-> **最容易填错的是第 2 项。** `interface` 问的是网卡的系统名字（`en0`），
-> 不是 WiFi 的名字。填错的话所有请求都会绑到不存在的网卡上而失败。
-> 不确定就直接回车用默认值 —— 填错了向导现在也会挡住并提示你。
-
-### 配置文件
-
-默认路径 `~/.config/schoolwifi/config.ini`，用 `-c/--config` 可以指定别的。
-带完整注释的示例见 [`config/config.example.ini`](config/config.example.ini)。
-
-大多数学校只需要这几行，`[portal]` 整段留空即可：
+示意如下（真实门户匹配值由工具生成，不用手写）：
 
 ```ini
 [network]
-ssid = CAMPUS-WIFI
+format = 2
+ssid = "宿舍WiFi"
+interface = en0
 
-[account]
-username = 20210001
+[stage.1.account]
+username = 我的校园账号
+keychain_service = 对应钥匙串服务
+
+[stage.1.portal]
+login_method = form
+portal_match = byod http://campus.example:80/byod/login.html
+
+[stage.2.account]
+username = 我的宽带账号
+keychain_service = 另一钥匙串服务
+
+[stage.2.portal]
+login_method = form
+portal_match = form http://isp.example:80/login.do
 ```
+
+阶段编号用于组织已发现的认证，不表示必须从第一项开始尝试；阶段数由列表确定。
+`portal_match` 根据协议、门户目标的协议/主机/端口/路径生成，剔除会变化的查询参数。
+同一身份匹配多个阶段时拒绝选择；同一入口但只靠查询参数区分的不同账号不能自动区分，需要高级配置。
+网络身份匹配只用于选配置，不是对 WiFi 或门户的密码学身份认证。
+
+默认 `login` 使用新流程；显式 `-c` 指向旧格式时保留旧行为，包括旧的分文件串联。
+`setup -c 旧配置路径` 保留原来的高级配置向导。旧格式示例见
+[`config/config.example.ini`](config/config.example.ini)。下面的字段表描述旧格式；
+新格式各阶段的同名设置放在 `[stage.N.account]` / `[stage.N.portal]` 中，网络参数放在顶层。
 
 #### `[network]` —— 在哪个网络上动作
 
@@ -258,7 +248,7 @@ SCHOOLWIFI_PASSWORD='xxx' schoolwifi -v login
 
 ### 改完配置之后
 
-`watch` 只在启动时读一次配置，所以改完配置要让后台进程重新加载：
+默认 `watch` 每轮重新选择网络并读取配置。显式指定旧配置的守护仍需重启才能加载修改：
 
 ```bash
 schoolwifi install-agent    # 会先卸载再重新加载，改完配置跑这个就行
@@ -397,45 +387,12 @@ probe_timeout = 2
 
 ### 需要连续过两道认证（比如校园网 + 运营商宽带）
 
-有些宿舍网是**两级认证**：先过校园网门户，再过一个运营商（联通/电信/移动）的
-宽带认证，两道的账号密码通常不一样。
+直接运行 `schoolwifi login`，按出现的门户逐步登记。下次以实时门户判断当前该用哪套账号；
+第一道仍有效时可以直接从第二道继续。不根据“上次成功”假定本次仍有效，也不轮流试账号。
 
-**已支持自动串联，而且 `setup` 会主动问你。** 跑 `schoolwifi setup` 时第五个问题
-选 `y`，两道的账号密码一次填完，配置文件和钥匙串条目都会自动建好——
-下面的手写配置只是说明它生成了什么，正常用不着自己写：
-
-```ini
-# ~/.config/schoolwifi/dorm.ini —— 第一层（校园网）
-[account]
-username = <校园网账号>
-keychain_service = schoolwifi
-
-[portal]
-next_stage = ~/.config/schoolwifi/dorm-isp.ini
-```
-
-```ini
-# ~/.config/schoolwifi/dorm-isp.ini —— 第二层（运营商）
-[account]
-username = <运营商账号>
-```
-
-之后在这个网络下直接 `schoolwifi login` 即可，不用加 `-c`——
-它按 SSID 自动选到第一层，再自动接上第二层。
-
-日志里能看到交接：
-
-```
-INFO  byod: submitting login for <校园网账号>
-INFO  stage 1 done; 10.20.30.40 now wants authentication too -- continuing with .../dorm-isp.ini
-INFO  submitting login to http://10.20.30.40/... as <运营商账号>
-INFO  connected: verified online
-```
-
-最多串 4 层，超过会报错而不是无限循环。
-
-> `SCHOOLWIFI_PASSWORD` 只对你直接调用的那一层生效，不会穿透到后续阶段
-> ——后面的阶段在别的地方认证，用的是自己的账号。
+旧配置通过 `-c` 显式调用时仍支持 `next_stage` 分文件串联（最多 4 层）；
+新网络配置最多登记 16 道，不再需要 `next_stage`。新流程不使用全局 `SCHOOLWIFI_PASSWORD`，
+避免把一次密码覆盖用于错误阶段；旧格式的环境变量行为保持不变。
 
 ### 门户页面能打开，但登录没反应
 

@@ -784,8 +784,8 @@ void test_profile_selection() {
            "picks the campus profile on campus");
   check_eq(sw::select_profile(profiles, "DORM-WIFI", &why), "/c/dorm.ini",
            "picks the dorm entry, not its second stage");
-  check_eq(sw::select_profile(profiles, "dorm-wifi", &why), "/c/dorm.ini",
-           "SSID match is case-insensitive");
+  check_eq(sw::select_profile(profiles, "dorm-wifi", &why), "",
+           "SSID match preserves case");
 
   check_eq(sw::select_profile(profiles, "SOMEONE-ELSE", &why), "", "an unknown SSID selects none");
   check(sw::util::icontains(why, "no profile names"), "and says why");
@@ -965,6 +965,83 @@ void test_config_roundtrip() {
   check_eq(missing.username, "", "missing config leaves defaults");
 }
 
+void test_network_profiles() {
+  section("network profiles and portal binding");
+  check(sw::network_config_path("宿舍 WiFi").find("宿舍 WiFi.ini") != std::string::npos,
+        "normal Unicode SSID is a readable filename");
+  check(sw::network_config_path("a/b") != sw::network_config_path("a%2Fb"),
+        "escaped SSID filenames cannot collide");
+  check(sw::network_config_path("../x").find("../") == std::string::npos,
+        "SSID cannot escape profile directory");
+  auto page = page_of("http://PORTAL.test:80/login?token=secret",
+      "<form action='/auth?token=one'><input name='username'><input type='password' name='password'></form>");
+  const auto identity = sw::portal::stage_identity(page);
+  check_eq(identity, "form http://portal.test:80/auth", "identity normalizes host and excludes session query");
+  page.url = "http://portal.test/login?token=two";
+  check_eq(sw::portal::stage_identity(page), identity, "rotating session does not change stage");
+  page.html = "<form action='/second/auth'><input name='username'><input type='password' name='password'></form>";
+  check(sw::portal::stage_identity(page) != identity, "same-host different endpoints are distinct stages");
+  check(sw::portal::stage_identity(page_of("http://portal.test", "unknown")).empty(),
+        "unknown portal cannot receive credentials");
+  sw::Config cfg;
+  cfg.network_profile = true; cfg.ssid = " 宿舍 WiFi ";
+  cfg.probe_urls = {"http://probe.test/check"}; cfg.user_agent = "test-agent";
+  sw::Config first, second;
+  first.username = "campus"; first.portal_match = identity;
+  first.keychain_service = "test-first";
+  second.username = "broadband"; second.portal_match = "form http://isp.test:80/auth";
+  second.keychain_service = "test-second"; second.extra_fields["CaseSensitive"] = "yes";
+  cfg.stages = {first, second};
+  std::string err;
+  check(sw::save_config(cfg, "build/test-network.ini", &err), "save multi-stage profile");
+  sw::Config loaded;
+  check(sw::load_config("build/test-network.ini", &loaded, &err), "load multi-stage profile");
+  check(loaded.network_profile && loaded.stages.size() == 2, "format and stage count survive");
+  check_eq(loaded.ssid, cfg.ssid, "SSID whitespace preserved");
+  check(loaded.probe_urls == cfg.probe_urls, "custom probe URLs survive migration");
+  check_eq(loaded.user_agent, cfg.user_agent, "user agent survives migration");
+  if (loaded.stages.size() == 2) {
+    check_eq(loaded.stages[0].username, "campus", "first account isolated");
+    check_eq(loaded.stages[1].username, "broadband", "second account isolated");
+    check_eq(loaded.stages[1].keychain_service, "test-second", "Keychain reference preserved");
+    check_eq(loaded.stages[1].extra_fields["CaseSensitive"], "yes", "custom stage fields preserved");
+  }
+  sw::util::write_file("build/test-invalid-network.ini", "[stage.999.account]\nusername=x\n");
+  sw::Config invalid;
+  check(!sw::load_config("build/test-invalid-network.ini", &invalid, &err), "invalid stage index rejected");
+}
+
+void test_network_migration() {
+  section("legacy network migration");
+  sw::Config first, second;
+  first.ssid = "schoolwifi-offline-migration-test";
+  first.username = "old-campus"; first.keychain_service = "old-campus-service";
+  first.next_stage = "build/migration-second.ini";
+  second.ssid = first.ssid;
+  second.username = "old-isp"; second.keychain_service = "old-isp-service";
+  std::string err;
+  check(sw::save_config(first, "build/migration-first.ini", &err), "write legacy first fixture");
+  check(sw::save_config(second, "build/migration-second.ini", &err), "write legacy second fixture");
+  const auto before = sw::util::read_file("build/migration-first.ini");
+  sw::Config loaded;
+  sw::load_config("build/migration-first.ini", &loaded, &err);
+  check(sw::consolidate_network_config(&loaded, &err), "migration collects both legacy credentials");
+  check(loaded.network_profile && loaded.stages.size() == 2, "migration produces consolidated stages");
+  if (loaded.stages.size() == 2) {
+    check_eq(loaded.stages[1].keychain_service, "old-isp-service", "migration reuses old Keychain reference");
+    check(loaded.stages[0].portal_match.empty() && loaded.stages[1].portal_match.empty(),
+          "migration never guesses which account belongs to a live portal");
+  }
+  check_eq(sw::util::read_file("build/migration-first.ini"), before, "legacy source is untouched");
+  first.source_path = "build/migration-first.ini";
+  first.next_stage = first.source_path;
+  sw::save_config(first, first.source_path, &err);
+  check(!sw::consolidate_network_config(&first, &err), "cyclic migration rejected");
+  sw::Config plaintext;
+  plaintext.username = "user"; plaintext.password = "secret";
+  check(!sw::consolidate_network_config(&plaintext, &err), "plaintext not silently discarded by migration");
+}
+
 } // namespace
 
 int main() {
@@ -994,6 +1071,8 @@ int main() {
   test_chained_portal_diagnosis();
   test_form_encoding();
   test_config_roundtrip();
+  test_network_profiles();
+  test_network_migration();
 
   std::printf("\n%d checks, %d failures\n", g_checks, g_failures);
   return g_failures == 0 ? 0 : 1;

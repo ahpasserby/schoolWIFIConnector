@@ -385,6 +385,103 @@ grep -qE "REJECT stage2-(baspushurl|testmacauth)" "$WORK/ts.log" \
 grep -q "REJECT stage2-credentials" "$WORK/ts.log" \
   && bad "SCHOOLWIFI_PASSWORD leaked into the second stage" \
   || ok "SCHOOLWIFI_PASSWORD does not leak into the second stage"
+# v2 profile: start directly at the ISP while the campus stage is still valid.
+curl -s -o /dev/null "http://127.0.0.1:$TS_PORT/logout"
+cat > "$WORK/network.ini" <<INI
+[network]
+format = 2
+interface =
+[portal]
+probe_urls = http://127.0.0.1:$TS_PORT/probe
+[stage.1.account]
+username = wrong-campus-account
+password = never-send-this
+[stage.1.portal]
+portal_match = byod http://127.0.0.1:$TS_PORT/byod/view/byod/template/templatePc.html
+[stage.2.account]
+username = isp-user
+password = isp-pass
+[stage.2.portal]
+portal_match = form http://127.0.0.1:$((TS_PORT + 1))/stage2/auth
+INI
+if "$BIN" -c "$WORK/network.ini" login >"$WORK/network.log" 2>&1; then
+  ok "network profile resumes directly at the ISP stage"
+else
+  bad "network profile resumes directly at the ISP stage -- $(tail -4 "$WORK/network.log")"
+fi
+grep -q 'using authentication stage 2' "$WORK/network.log" \
+  && ok "selects matching stage before fetching credentials" || bad "selects matching stage"
+grep -q 'as wrong-campus-account' "$WORK/network.log" \
+  && bad "sent campus account to ISP" || ok "does not send campus account to ISP"
+# Both stages expired: the same profile must discover and complete each step.
+curl -s -o /dev/null "http://127.0.0.1:$TS_PORT/test-reset"
+sed -e 's/wrong-campus-account/20210001/' -e 's/never-send-this/s3cr3t p@ss/' \
+  -e '/\[stage.1.portal\]/a\
+service_suffix_id = 9
+' "$WORK/network.ini" > "$WORK/network-both.ini"
+if "$BIN" -c "$WORK/network-both.ini" login >"$WORK/network-both.log" 2>&1; then
+  ok "one network profile completes both expired stages"
+else
+  bad "one network profile completes both expired stages -- $(tail -4 "$WORK/network-both.log")"
+fi
+# Unknown portals must not pick a credential or block waiting for input.
+curl -s -o /dev/null "http://127.0.0.1:$TS_PORT/logout"
+sed 's@/stage2/auth@/different/auth@' "$WORK/network.ini" > "$WORK/unknown-network.ini"
+if "$BIN" -c "$WORK/unknown-network.ini" login </dev/null >"$WORK/unknown-network.log" 2>&1; then
+  bad "unknown portal was accepted"
+else
+  grep -q 'not enrolled' "$WORK/unknown-network.log" \
+    && ok "unknown portal stops noninteractively" || bad "unknown portal stops noninteractively"
+fi
+grep -q 'submitting login' "$WORK/unknown-network.log" \
+  && bad "unknown portal received credentials" || ok "unknown portal receives no credentials"
+
+# An interactive unknown-portal enrollment can be cancelled without saving.
+if python3 - "$BIN" "$WORK/unknown-network.ini" <<'PYTEST'
+import os, pty, select, sys, time
+from pathlib import Path
+binary, config = sys.argv[1:]
+before = Path(config).read_bytes()
+pid, fd = pty.fork()
+if pid == 0:
+    os.execv(binary, [binary, '-c', config, 'login'])
+output = b''
+try:
+    deadline = time.monotonic() + 20
+    while time.monotonic() < deadline:
+        if select.select([fd], [], [], 1)[0]:
+            try:
+                chunk = os.read(fd, 65536)
+            except OSError:
+                break
+            output += chunk
+            if '账号（回车取消）'.encode() in output:
+                os.write(fd, b'\n')
+                break
+    else:
+        raise AssertionError('enrollment prompt timeout')
+    assert '账号（回车取消）'.encode() in output, output.decode(errors='replace')
+    for _ in range(50):
+        child, status = os.waitpid(pid, os.WNOHANG)
+        if child:
+            assert os.waitstatus_to_exitcode(status) == 2
+            pid = 0
+            break
+        time.sleep(.1)
+    assert pid == 0, 'cancel did not exit'
+    assert Path(config).read_bytes() == before, 'cancel changed profile'
+finally:
+    os.close(fd)
+    if pid:
+        os.kill(pid, 15)
+        os.waitpid(pid, 0)
+PYTEST
+then
+  ok "interactive enrollment cancels without changing the profile"
+else
+  bad "interactive enrollment cancellation"
+fi
+
 # A wrong password here is reported by re-rendering the form with the complaint
 # in a hidden field, which is the only place the real reason appears.
 curl -s -o /dev/null "http://127.0.0.1:$TS_PORT/logout" 2>/dev/null

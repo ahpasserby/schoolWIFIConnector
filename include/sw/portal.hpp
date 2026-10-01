@@ -63,7 +63,10 @@ struct LoginResult {
 
 // Performs a full login: probe -> resolve page -> submit -> verify by
 // re-probing. `password` is supplied by the caller (Keychain, env or config).
-LoginResult login(http::Client &client, const Config &cfg, const std::string &password);
+LoginResult login(http::Client &client, const Config &cfg, const std::string &password,
+                  const Probe *observed = nullptr, const LoginPage *discovered = nullptr);
+// Stable credential destination; excludes per-session query parameters.
+std::string stage_identity(const LoginPage &page);
 
 // Best-effort logout; requires `logout_url` in the config.
 LoginResult logout(http::Client &client, const Config &cfg);
