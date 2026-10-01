@@ -242,7 +242,7 @@ portal::LoginResult login(http::Client &client, const Config &cfg, const PortalI
                               "&username=" + util::url_encode(cfg.username) +
                               "&ip=" + util::url_encode(ip) + "&_=" + now_millis();
 
-  http::Response challenge = client.get(challenge_url, /*follow=*/true, 10);
+  http::Response challenge = client.get(challenge_url, /*follow=*/false, 10);
   if (!challenge.ok) {
     result.message = "get_challenge failed: " + challenge.error;
     return result;
@@ -293,7 +293,7 @@ portal::LoginResult login(http::Client &client, const Config &cfg, const PortalI
   log::info("srun: challenge obtained, submitting login for " + cfg.username + " (ip " + ip +
             ", acid " + info.ac_id + ")");
 
-  http::Response resp = client.get(login_url, /*follow=*/true, 12);
+  http::Response resp = client.get(login_url, /*follow=*/false, 12);
   if (!resp.ok) {
     result.message = "srun_portal request failed: " + resp.error;
     return result;

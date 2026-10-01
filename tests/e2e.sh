@@ -53,6 +53,15 @@ INI
 
 export SCHOOLWIFI_PASSWORD='s3cr3t p@ss'
 
+# Legacy configs lack trusted portal bindings and may never run unattended.
+if "$BIN" --config "$CONFIG" watch >"$WORK/legacy-watch.log" 2>&1; then
+  bad "legacy background authentication was accepted"
+else
+  grep -q 'background authentication requires' "$WORK/legacy-watch.log" \
+    && ok "legacy background authentication is rejected before probing" \
+    || bad "legacy background guard"
+fi
+
 echo "e2e: captive portal login"
 
 # 1. Starts out captive.
@@ -424,6 +433,24 @@ if "$BIN" -c "$WORK/network-both.ini" login >"$WORK/network-both.log" 2>&1; then
 else
   bad "one network profile completes both expired stages -- $(tail -4 "$WORK/network-both.log")"
 fi
+if "$BIN" -c "$WORK/network.ini" watch >"$WORK/unnamed-watch.log" 2>&1; then
+  bad "unnamed network profile was allowed in the background"
+else
+  grep -q 'background authentication requires' "$WORK/unnamed-watch.log" \
+    && ok "background requires an explicit SSID" || bad "background SSID guard"
+fi
+
+# A portal must not forward the credential POST to another authority via 307/308.
+for redirect_code in 307 308; do
+  curl -s -o /dev/null "http://127.0.0.1:$TS_PORT/logout"
+  curl -s -o /dev/null "http://127.0.0.1:$TS_PORT/test-credential-redirect?code=$redirect_code"
+  "$BIN" -c "$WORK/network.ini" login >"$WORK/redirect-$redirect_code.log" 2>&1
+  grep -q 'CREDENTIALS_REDIRECTED' "$WORK/ts.log" \
+    && bad "credentials followed HTTP $redirect_code" \
+    || ok "credential POST does not follow HTTP $redirect_code"
+done
+curl -s -o /dev/null "http://127.0.0.1:$TS_PORT/test-credential-redirect"
+
 # Unknown portals must not pick a credential or block waiting for input.
 curl -s -o /dev/null "http://127.0.0.1:$TS_PORT/logout"
 sed 's@/stage2/auth@/different/auth@' "$WORK/network.ini" > "$WORK/unknown-network.ini"

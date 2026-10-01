@@ -259,7 +259,7 @@ portal::LoginResult login(http::Client &client, const Config &cfg, const portal:
   req.method = "POST";
   req.body = body;
   req.content_type = "application/json";
-  req.follow = true;
+  req.follow = false;  // Credential-bearing POST must not follow redirects.
   req.timeout_sec = 15;
   req.referer = page.url;
   req.extra_headers.push_back("X-Requested-With: XMLHttpRequest");

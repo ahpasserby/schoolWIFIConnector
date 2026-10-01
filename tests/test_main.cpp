@@ -1042,6 +1042,31 @@ void test_network_migration() {
   check(!sw::consolidate_network_config(&plaintext, &err), "plaintext not silently discarded by migration");
 }
 
+void test_safe_browser_launch() {
+  section("SSID guard and shell-free browser launch");
+  check(!sw::matches_registered_network("CAMPUS", ""), "unreadable SSID fails closed");
+  check(!sw::matches_registered_network("", "CAMPUS"), "missing registered SSID fails closed");
+  check(!sw::matches_registered_network("CAMPUS", "campus"), "case-different SSID fails closed");
+  check(!sw::matches_registered_network("CAMPUS", "HOME"), "different network fails closed");
+  check(sw::matches_registered_network("CAMPUS", "CAMPUS"), "exact registered network is accepted");
+  const std::string payload = "https://portal.example/login?q=';$(touch /tmp/should-not-run);`id`&x=hello world";
+  const auto args = sw::util::browser_open_args(payload);
+  check(args.size() == 3, "browser argv has fixed executable, separator and URL");
+  if (args.size() == 3) {
+    check_eq(args[0], "/usr/bin/open", "fixed browser opener path");
+    check_eq(args[1], "--", "URL is not interpreted as an option");
+    check_eq(args[2], payload, "shell metacharacters remain literal URL bytes");
+  }
+  check(sw::util::browser_open_args("file:///tmp/test").empty(), "reject local file URLs");
+  check(sw::util::browser_open_args("javascript:alert(1)").empty(), "reject script URLs");
+  check(sw::util::browser_open_args("-a Calculator").empty(), "reject option injection");
+  check(sw::util::browser_open_args("https://portal.test/\ncommand").empty(), "reject newline URLs");
+  // The script is constant; untrusted strings are separate positional arguments.
+  check(sw::util::run_process({"/bin/sh", "-c", "test \"$1\" = \"$2\"", "argv-test", payload, payload}) == 0,
+        "spawn preserves a hostile-looking argument without evaluation");
+  check(sw::util::run_process({"/bin/sh", "-c", "exit 7"}) == 7, "child failure propagates");
+}
+
 } // namespace
 
 int main() {
@@ -1073,6 +1098,7 @@ int main() {
   test_config_roundtrip();
   test_network_profiles();
   test_network_migration();
+  test_safe_browser_launch();
 
   std::printf("\n%d checks, %d failures\n", g_checks, g_failures);
   return g_failures == 0 ? 0 : 1;

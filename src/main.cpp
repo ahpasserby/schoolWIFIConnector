@@ -138,15 +138,14 @@ bool resolve_password(const sw::Config &cfg, std::string *out, std::string *err,
   return false;
 }
 
-// Returns false when the config pins an SSID and we are demonstrably on a
-// different one. An unreadable SSID never blocks a login attempt.
+// Explicit legacy configs may opt out of SSID pinning; pinned configs fail closed.
 bool ssid_allows_action(const sw::Config &cfg, const sw::wifi::Info &info) {
   if (cfg.ssid.empty()) return true;
   if (info.ssid.empty()) {
-    sw::log::debug("SSID unreadable; proceeding despite the ssid guard");
-    return true;
+    sw::log::error("SSID unreadable; refusing to send saved credentials");
+    return false;
   }
-  if (sw::util::iequals(cfg.ssid, info.ssid)) return true;
+  if (sw::matches_registered_network(cfg.ssid, info.ssid)) return true;
   sw::log::info("on \"" + info.ssid + "\", config targets \"" + cfg.ssid + "\" - skipping");
   return false;
 }
@@ -283,7 +282,7 @@ int network_login(sw::Config cfg, bool interactive, bool edit = false) {
   for (int step = 0; step < 16; ++step) {
     if (!cfg.ssid.empty()) {
       const auto here = sw::wifi::current(cfg.interface);
-      if (here.ssid != cfg.ssid) {
+      if (!sw::matches_registered_network(cfg.ssid, here.ssid)) {
         sw::log::error("Wi-Fi changed or its name is unavailable; no credentials sent"); return 2;
       }
     }
@@ -393,7 +392,7 @@ int network_login(sw::Config cfg, bool interactive, bool edit = false) {
       sw::log::error("no password for this stage; run schoolwifi setup to update this portal's account"); return 2;
     }
     // Recheck association after an interactive prompt; never submit on a changed SSID.
-    if (!cfg.ssid.empty() && sw::wifi::current(cfg.interface).ssid != cfg.ssid) {
+    if (!cfg.ssid.empty() && !sw::matches_registered_network(cfg.ssid, sw::wifi::current(cfg.interface).ssid)) {
       sw::log::error("Wi-Fi changed while registering; please retry on the intended network"); return 2;
     }
     attempted.push_back(identity);
@@ -505,91 +504,30 @@ int cmd_open(const sw::Config &cfg) {
   sw::log::info("opening " + url);
   // Hand it to the default browser rather than the Captive Network Assistant,
   // which is exactly the window that fails to appear.
-  std::string cmd = "open '" + url + "'";
-  return std::system(cmd.c_str()) == 0 ? 0 : 1;
+  const auto args = sw::util::browser_open_args(url);
+  if (args.empty()) { sw::log::error("refusing to open a non-HTTP(S) portal URL"); return 1; }
+  return sw::util::run_process(args) == 0 ? 0 : 1;
 }
 
 int cmd_watch(const sw::Config &cfg) {
-  if (cfg.network_profile) {
-    ::signal(SIGINT, on_signal); ::signal(SIGTERM, on_signal);
-    while (!g_stop) {
-      sw::Config live; std::string err;
-      if (!sw::load_config(cfg.source_path, &live, &err) || live.source_path.empty()) {
-        sw::log::error("could not reload network profile"); return 2;
-      }
-      network_login(live, false);
-      for (int i = 0; i < cfg.online_interval && !g_stop; ++i)
-        std::this_thread::sleep_for(std::chrono::seconds(1));
-    }
-    return 0;
+  // Old profiles have no trusted portal binding. Never silently run them in
+  // the background, even when installed by a previous version's LaunchAgent.
+  if (!cfg.network_profile || cfg.ssid.empty()) {
+    sw::log::error("background authentication requires a named network profile with portal bindings; "
+                   "run schoolwifi login interactively, then reinstall the agent without -c");
+    return 2;
   }
-  if (cfg.username.empty()) {
-    sw::log::error("no username configured; run `schoolwifi setup`"); return 2;
-  }
-
-  ::signal(SIGINT, on_signal);
-  ::signal(SIGTERM, on_signal);
-
-  sw::log::info("watching (online every " + std::to_string(cfg.online_interval) + "s, captive every " +
-                std::to_string(cfg.captive_interval) + "s)");
-
-  int consecutive_failures = 0;
-  auto last_state = sw::portal::State::Offline;
-  bool first = true;
-
+  ::signal(SIGINT, on_signal); ::signal(SIGTERM, on_signal);
   while (!g_stop) {
-    sw::Config live = cfg;  // re-read nothing: config changes need a restart
-    sw::http::Client client;
-    make_client(&client, live);
-
-    sw::wifi::Info info = sw::wifi::current(live.interface);
-    sw::portal::Probe pr = sw::portal::probe(client, live);
-
-    if (first || pr.state != last_state) {
-      sw::log::info(std::string("state: ") + sw::portal::state_name(pr.state) +
-                    (info.ssid.empty() ? "" : " on " + info.ssid));
-      last_state = pr.state;
-      first = false;
+    sw::Config live; std::string err;
+    if (!sw::load_config(cfg.source_path, &live, &err) || live.source_path.empty() ||
+        !live.network_profile || live.ssid.empty()) {
+      sw::log::error("could not reload a named network profile"); return 2;
     }
-
-    int sleep_for = live.online_interval;
-
-    if (pr.state == sw::portal::State::Captive && ssid_allows_action(live, info)) {
-      std::string password;
-      std::string err;
-      if (!resolve_password(live, &password, &err)) {
-        sw::log::error(err);
-        return 2;  // unrecoverable: no point spinning
-      }
-
-      sw::portal::LoginResult res = sw::portal::login(client, live, password);
-      if (res.success) {
-        sw::log::info("connected: " + res.message);
-        consecutive_failures = 0;
-        last_state = sw::portal::State::Online;
-      } else {
-        ++consecutive_failures;
-        sw::log::warn("login failed (" + std::to_string(consecutive_failures) + "/" +
-                      std::to_string(live.max_retries) + "): " + res.message);
-        if (consecutive_failures >= live.max_retries) {
-          sw::log::warn("backing off for " + std::to_string(live.retry_backoff) + "s");
-          sleep_for = live.retry_backoff;
-          consecutive_failures = 0;
-        } else {
-          sleep_for = live.captive_interval;
-        }
-      }
-    } else if (pr.state != sw::portal::State::Online) {
-      sleep_for = live.captive_interval;
-    }
-
-    // Wake once a second so SIGTERM from launchd is honoured promptly.
-    for (int i = 0; i < sleep_for && !g_stop; ++i) {
+    network_login(live, false);
+    for (int i = 0; i < std::max(1, live.online_interval) && !g_stop; ++i)
       std::this_thread::sleep_for(std::chrono::seconds(1));
-    }
   }
-
-  sw::log::info("stopped");
   return 0;
 }
 

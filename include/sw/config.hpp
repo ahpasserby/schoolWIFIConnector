@@ -62,6 +62,8 @@ struct Config {
 std::string default_config_path();
 // Directory the default config lives in; where profiles are looked for.
 std::string config_dir();
+// Fail closed for automatic authentication when either identity is missing.
+bool matches_registered_network(const std::string &expected, const std::string &observed);
 std::string network_config_path(const std::string &ssid);
 // In-memory migration; preserves old files and Keychain references.
 bool consolidate_network_config(Config *cfg, std::string *err);

@@ -1,6 +1,9 @@
 #include "sw/util.hpp"
 
 #include <termios.h>
+#include <spawn.h>
+#include <sys/wait.h>
+#include <crt_externs.h>
 #include <unistd.h>
 
 #include <sys/stat.h>
@@ -518,6 +521,31 @@ std::string read_password(const std::string &prompt) {
     std::fputs("\n", stdout);
   }
   return line;
+}
+
+std::vector<std::string> browser_open_args(const std::string &url) {
+  if (url.find_first_of("\r\n") != std::string::npos || url.find('\0') != std::string::npos)
+    return {};
+  const auto scheme = lower(url.substr(0, url.find("://")));
+  if ((scheme != "http" && scheme != "https") || parse_url(url).host.empty()) return {};
+  return {"/usr/bin/open", "--", url};
+}
+
+int run_process(const std::vector<std::string> &args) {
+  if (args.empty()) return -1;
+  std::vector<char *> argv;
+  for (const auto &arg : args) {
+    if (arg.find('\0') != std::string::npos) return -1;
+    argv.push_back(const_cast<char *>(arg.c_str()));
+  }
+  argv.push_back(nullptr);
+  pid_t pid;
+  if (::posix_spawn(&pid, argv[0], nullptr, nullptr, argv.data(), *_NSGetEnviron()) != 0) return -1;
+  int status;
+  while (::waitpid(pid, &status, 0) < 0) {
+    if (errno != EINTR) return -1;
+  }
+  return WIFEXITED(status) ? WEXITSTATUS(status) : -1;
 }
 
 } // namespace sw::util

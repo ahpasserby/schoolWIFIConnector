@@ -33,6 +33,10 @@ std::string default_config_path() {
 
 std::string config_dir() { return util::dirname(default_config_path()); }
 
+bool matches_registered_network(const std::string &expected, const std::string &observed) {
+  return !expected.empty() && !observed.empty() && expected == observed;
+}
+
 std::string network_config_path(const std::string &ssid) {
   // Encode unsafe bytes injectively; preserve Unicode and spaces for readability.
   std::string name;

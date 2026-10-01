@@ -251,6 +251,11 @@ class Portal(BaseHTTPRequestHandler):
               </form></body></html>''')
             return
 
+        if path == "/test-credential-redirect":
+            state["credential_redirect"] = query.get("code", [""])[0]
+            self._send(200, "configured")
+            return
+
         if path == "/test-reset":
             state["online"] = False
             state["stage1"] = False
@@ -413,7 +418,16 @@ class Portal(BaseHTTPRequestHandler):
                             '</form></body></html>')
             return
 
+        if path == "/test-credential-sink":
+            self.log_message("CREDENTIALS_REDIRECTED")
+            self._send(200, "unexpected credential replay")
+            return
+
         if path == "/stage2/auth":
+            if state.get("credential_redirect"):
+                self._send(int(state["credential_redirect"]), "", headers={"Location":
+                    f"http://localhost:{state['stage2_port']}/test-credential-sink"})
+                return
             if flat.get("tok") != "s2-token":
                 self.log_message("REJECT stage2-token")
                 self._send(200, "<html><body>ERROR: bad token</body></html>")

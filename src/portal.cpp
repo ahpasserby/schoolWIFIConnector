@@ -721,7 +721,7 @@ LoginResult login(http::Client &client, const Config &cfg, const std::string &pa
     req.url = util::expand_vars(cfg.login_url, vars);
     req.method = util::iequals(cfg.http_method, "GET") ? "GET" : "POST";
     req.body = util::expand_vars(cfg.post_body, vars);
-    req.follow = true;
+    req.follow = false;  // Never replay credentials through a portal redirect.
     req.timeout_sec = 12;
 
     result.posted_to = req.url;
@@ -823,7 +823,7 @@ LoginResult login(http::Client &client, const Config &cfg, const std::string &pa
   http::Request req;
   req.method = plan.method;
   req.referer = page.url;
-  req.follow = true;
+  req.follow = false;  // Never replay credentials through a portal redirect.
   req.timeout_sec = 12;
   if (plan.method == "GET") {
     req.url = plan.action_url + (plan.action_url.find('?') == std::string::npos ? "?" : "&") + encoded;

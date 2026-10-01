@@ -74,6 +74,9 @@ std::string now_compact();
 
 // Runs a command via /bin/sh and captures stdout. Returns "" on failure.
 std::string exec_capture(const std::string &cmd);
+// Browser URLs are HTTP(S) only and passed as one argument, never shell code.
+std::vector<std::string> browser_open_args(const std::string &url);
+int run_process(const std::vector<std::string> &args);
 
 // Reads a line from the terminal with echo disabled.
 std::string read_password(const std::string &prompt);
